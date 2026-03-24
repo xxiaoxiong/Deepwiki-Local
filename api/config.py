@@ -18,6 +18,32 @@ OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.deepseek.com/v1
 VLLM_API_KEY = os.environ.get('VLLM_API_KEY', 'not-needed')
 VLLM_BASE_URL = os.environ.get('VLLM_BASE_URL', 'http://localhost:8000/v1')
 
+# Runtime overrides for provider URLs (set via UI, not persisted across restarts)
+runtime_overrides: Dict[str, Any] = {
+    "provider_urls": {},  # e.g. {"vllm": "http://10.0.0.1:8000/v1", "deepseek": "https://..."}
+}
+
+def get_provider_base_url(provider: str) -> str:
+    """Get the effective base URL for a provider, checking runtime overrides first."""
+    # Check runtime overrides first
+    override_url = runtime_overrides["provider_urls"].get(provider)
+    if override_url:
+        return override_url
+    # Fall back to env/default
+    if provider == "vllm":
+        return VLLM_BASE_URL
+    elif provider == "deepseek":
+        return OPENAI_BASE_URL or 'https://api.deepseek.com/v1'
+    elif provider == "ollama":
+        return os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+    else:
+        return OPENAI_BASE_URL or 'https://api.openai.com/v1'
+
+def set_provider_base_url(provider: str, url: str):
+    """Set a runtime override for a provider's base URL."""
+    runtime_overrides["provider_urls"][provider] = url
+    logger.info(f"Runtime override set for provider '{provider}' base URL: {url}")
+
 # Set keys in environment (in case they're needed elsewhere in the code)
 if OPENAI_API_KEY:
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY

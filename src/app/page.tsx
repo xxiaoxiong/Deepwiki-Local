@@ -76,6 +76,40 @@ export default function Home() {
   };
 
   const [repositoryInput, setRepositoryInput] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleUploadZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    setUploadMsg(null);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch('/api/upload/repo', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      if (response.ok && data.path) {
+        setRepositoryInput(data.path);
+        setUploadMsg('Upload successful! Path has been filled in automatically.');
+        setTimeout(() => setUploadMsg(null), 4000);
+      } else {
+        setError(data.error || 'Upload failed');
+      }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_err) {
+      setError('Upload failed: network error');
+    } finally {
+      setIsUploading(false);
+      // Reset file input so the same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const REPO_CONFIG_CACHE_KEY = 'deepwikiRepoConfigCache';
 
@@ -134,8 +168,9 @@ export default function Home() {
   const [excludedFiles, setExcludedFiles] = useState('');
   const [includedDirs, setIncludedDirs] = useState('');
   const [includedFiles, setIncludedFiles] = useState('');
-  const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local'>('github');
+  const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn'>('github');
   const [accessToken, setAccessToken] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
@@ -206,7 +241,10 @@ export default function Home() {
     else if (customGitRegex.test(input)) {
       // Detect repository type based on domain
       const domain = extractUrlDomain(input);
-      if (domain?.includes('github.com')) {
+      const lowerInput = input.toLowerCase();
+      if (lowerInput.includes('/svn/') || lowerInput.includes('svn.')) {
+        type = 'svn';
+      } else if (domain?.includes('github.com')) {
         type = 'github';
       } else if (domain?.includes('gitlab.com') || domain?.includes('gitlab.')) {
         type = 'gitlab';
@@ -381,6 +419,11 @@ export default function Home() {
     // Add language parameter
     params.append('language', selectedLanguage);
 
+    // Add API key if provided
+    if (apiKey) {
+      params.append('api_key', encodeURIComponent(apiKey));
+    }
+
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
 
@@ -439,7 +482,30 @@ export default function Home() {
               >
                 {isSubmitting ? t('common.processing') : t('common.generateWiki')}
               </button>
+              {/* Upload ZIP button */}
+              <div className="relative">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".zip"
+                  onChange={handleUploadZip}
+                  className="hidden"
+                  id="zip-upload"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="px-4 py-2.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 text-sm whitespace-nowrap disabled:opacity-50"
+                  title="Upload a ZIP file of your source code (for code on your local machine)"
+                >
+                  {isUploading ? 'Uploading...' : 'Upload ZIP'}
+                </button>
+              </div>
             </div>
+            {uploadMsg && (
+              <div className="text-xs text-green-500 mt-1 ml-1">{uploadMsg}</div>
+            )}
           </form>
 
           {/* Configuration Modal */}
@@ -460,6 +526,8 @@ export default function Home() {
             setIsCustomModel={setIsCustomModel}
             customModel={customModel}
             setCustomModel={setCustomModel}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
             selectedPlatform={selectedPlatform}
             setSelectedPlatform={setSelectedPlatform}
             accessToken={accessToken}

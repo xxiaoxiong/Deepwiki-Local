@@ -4,8 +4,8 @@ import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 interface TokenInputProps {
-  selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local';
-  setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local') => void;
+  selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn';
+  setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn') => void;
   accessToken: string;
   setAccessToken: (value: string) => void;
   showTokenSection?: boolean;

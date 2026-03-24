@@ -1,6 +1,6 @@
 import os
 import logging
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from typing import List, Optional, Dict, Any, Literal
@@ -144,7 +144,7 @@ class ModelConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     code: str = Field(..., description="Authorization code")
 
-from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE
+from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE, get_provider_base_url, set_provider_base_url, runtime_overrides
 
 @app.get("/lang/config")
 async def get_lang_config():
@@ -163,6 +163,45 @@ async def validate_auth_code(request: AuthorizationConfig):
     Check authorization code.
     """
     return {"success": WIKI_AUTH_CODE == request.code}
+
+class ProviderUrlUpdate(BaseModel):
+    provider: str = Field(..., description="Provider ID (e.g., vllm, deepseek, ollama)")
+    base_url: str = Field(..., description="New base URL for the provider")
+
+class CustomModelAdd(BaseModel):
+    provider: str = Field(..., description="Provider ID")
+    model_id: str = Field(..., description="Model identifier")
+    temperature: Optional[float] = Field(0.7, description="Temperature")
+    top_p: Optional[float] = Field(0.8, description="Top P")
+
+@app.get("/models/runtime_config")
+async def get_runtime_config():
+    """Get current runtime configuration including provider URLs."""
+    provider_urls = {}
+    for provider_id in configs.get("providers", {}).keys():
+        provider_urls[provider_id] = get_provider_base_url(provider_id)
+    return {"provider_urls": provider_urls}
+
+@app.post("/models/provider_url")
+async def update_provider_url(request: ProviderUrlUpdate):
+    """Update the base URL for a provider at runtime."""
+    set_provider_base_url(request.provider, request.base_url)
+    return {"success": True, "provider": request.provider, "base_url": request.base_url}
+
+@app.post("/models/add_model")
+async def add_custom_model(request: CustomModelAdd):
+    """Add a custom model to a provider's model list at runtime."""
+    if "providers" not in configs:
+        raise HTTPException(status_code=500, detail="Provider configuration not loaded")
+    provider_config = configs["providers"].get(request.provider)
+    if not provider_config:
+        raise HTTPException(status_code=404, detail=f"Provider '{request.provider}' not found")
+    # Add the model to the provider's models dict
+    model_params = {"temperature": request.temperature or 0.7, "top_p": request.top_p or 0.8}
+    if request.provider == "ollama":
+        model_params = {"options": {"temperature": request.temperature or 0.7, "top_p": request.top_p or 0.8, "num_ctx": 32000}}
+    provider_config["models"][request.model_id] = model_params
+    return {"success": True, "provider": request.provider, "model_id": request.model_id}
 
 @app.get("/models/config", response_model=ModelConfig)
 async def get_model_config():
@@ -213,15 +252,15 @@ async def get_model_config():
         return ModelConfig(
             providers=[
                 Provider(
-                    id="google",
-                    name="Google",
+                    id="vllm",
+                    name="Vllm",
                     supportsCustomModel=True,
                     models=[
-                        Model(id="gemini-2.5-flash", name="Gemini 2.5 Flash")
+                        Model(id="QWQ3-32b", name="QWQ3-32b")
                     ]
                 )
             ],
-            defaultProvider="google"
+            defaultProvider="vllm"
         )
 
 @app.post("/export/wiki")
@@ -272,6 +311,76 @@ async def export_wiki(request: WikiExportRequest):
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
 
+@app.post("/upload/repo")
+async def upload_repo_zip(file: UploadFile = File(...)):
+    """
+    Upload a ZIP file containing source code. Extracts to a server-side temp directory
+    and returns the path so it can be used with /local_repo/structure.
+    This solves the problem where 'local' paths refer to the user's machine
+    but the server cannot access them.
+    """
+    import tempfile
+    import zipfile
+    import shutil
+
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Please upload a .zip file"}
+        )
+
+    tmp_dir = None
+    try:
+        # Create a persistent temp directory (not auto-cleaned)
+        upload_base = os.path.join(tempfile.gettempdir(), "deepwiki_uploads")
+        os.makedirs(upload_base, exist_ok=True)
+
+        # Use a unique name based on the uploaded filename
+        import re as _re
+        safe_name = _re.sub(r'[^\w\-.]', '_', file.filename.rsplit('.', 1)[0])
+        tmp_dir = os.path.join(upload_base, f"{safe_name}_{int(datetime.now().timestamp())}")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        # Save uploaded file
+        zip_path = os.path.join(tmp_dir, file.filename)
+        with open(zip_path, 'wb') as f:
+            content = await file.read()
+            f.write(content)
+
+        # Extract ZIP
+        extract_dir = os.path.join(tmp_dir, "repo")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+
+        # Remove the zip file to save space
+        os.remove(zip_path)
+
+        # If the zip contains a single top-level directory, use that as the repo root
+        entries = os.listdir(extract_dir)
+        if len(entries) == 1 and os.path.isdir(os.path.join(extract_dir, entries[0])):
+            repo_path = os.path.join(extract_dir, entries[0])
+        else:
+            repo_path = extract_dir
+
+        logger.info(f"Uploaded repo extracted to: {repo_path}")
+        return {"path": repo_path, "message": "Upload successful"}
+
+    except zipfile.BadZipFile:
+        if tmp_dir and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid ZIP file"}
+        )
+    except Exception as e:
+        if tmp_dir and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        logger.error(f"Error processing uploaded repo: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error processing upload: {str(e)}"}
+        )
+
 @app.get("/local_repo/structure")
 async def get_local_repo_structure(path: str = Query(None, description="Path to local repository")):
     """Return the file tree and README content for a local repository."""
@@ -284,7 +393,9 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
     if not os.path.isdir(path):
         return JSONResponse(
             status_code=404,
-            content={"error": f"Directory not found: {path}"}
+            content={"error": f"Directory not found on server: {path}. "
+                     "Note: 'Local path' must be a path on the server machine, not your browser machine. "
+                     "If the code is on your local computer, please use the 'Upload ZIP' feature to upload it first."}
         )
 
     try:
@@ -383,50 +494,137 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
 @app.get("/repo/structure")
 async def get_repo_structure(
     repo_url: str = Query(..., description="Repository URL"),
-    repo_type: str = Query("gitea", description="Repository type (gitea, gitee, github, gitlab, etc.)"),
-    token: str = Query(None, description="Access token for private repositories")
+    repo_type: str = Query("gitea", description="Repository type (gitea, gitee, github, gitlab, svn, etc.)"),
+    token: str = Query(None, description="Access token for private repositories"),
+    svn_username: str = Query(None, description="SVN username for authentication"),
+    svn_password: str = Query(None, description="SVN password for authentication")
 ):
     """
     Fetch repository structure by cloning the repo on the backend.
-    Used for Gitea/Gitee/any remote repos to avoid CORS issues in the browser.
+    Used for Gitea/Gitee/SVN/any remote repos to avoid CORS issues in the browser.
     Returns file tree and README content.
+    Supports both Git and SVN repositories.
     """
     import tempfile
     import shutil
+    import subprocess
+
+    # Detect if this is an SVN repository
+    is_svn = (repo_type == "svn" or "/svn/" in repo_url.lower())
 
     tmp_dir = None
     try:
-        logger.info(f"Fetching remote repo structure: {repo_url} (type={repo_type})")
+        logger.info(f"Fetching remote repo structure: {repo_url} (type={repo_type}, is_svn={is_svn})")
 
-        # Create a temporary directory for cloning
+        # Create a temporary directory for cloning/checkout
         tmp_dir = tempfile.mkdtemp(prefix="deepwiki_repo_")
 
-        # Build clone URL with token if provided
-        from urllib.parse import urlparse, urlunparse, quote
-        parsed = urlparse(repo_url)
-        clone_url = repo_url
-        if token:
-            encoded_token = quote(token, safe='')
-            if repo_type == "gitlab":
-                clone_url = urlunparse((parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
-            elif repo_type == "bitbucket":
-                clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+        if is_svn:
+            # --- SVN checkout ---
+            svn_cmd = ["svn", "checkout", "--depth", "infinity"]
+
+            # Add authentication if provided
+            if svn_username and svn_password:
+                svn_cmd.extend(["--username", svn_username, "--password", svn_password, "--non-interactive", "--trust-server-cert"])
+            elif token:
+                # Use token as password with empty username, or as username
+                svn_cmd.extend(["--username", "", "--password", token, "--non-interactive", "--trust-server-cert"])
             else:
-                # github, gitea, gitee all use token@host format
-                clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                svn_cmd.extend(["--non-interactive", "--trust-server-cert"])
 
-        # Shallow clone (depth=1) for speed
-        import subprocess
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", clone_url, tmp_dir],
-            capture_output=True, text=True, timeout=120
-        )
+            svn_cmd.extend([repo_url, tmp_dir])
 
-        if result.returncode != 0:
-            error_msg = result.stderr.replace(token, '***') if token else result.stderr
-            raise Exception(f"Git clone failed: {error_msg}")
+            result = subprocess.run(
+                svn_cmd,
+                capture_output=True, text=True, timeout=180
+            )
 
-        # Walk the cloned repo to get file tree and README
+            if result.returncode != 0:
+                error_msg = result.stderr
+                # Sanitize credentials from error message
+                if svn_password:
+                    error_msg = error_msg.replace(svn_password, '***')
+                if token:
+                    error_msg = error_msg.replace(token, '***')
+
+                # Try svn list as fallback (for when checkout is not allowed but listing is)
+                logger.warning(f"SVN checkout failed, trying svn list: {error_msg}")
+                list_cmd = ["svn", "list", "-R"]
+                if svn_username and svn_password:
+                    list_cmd.extend(["--username", svn_username, "--password", svn_password, "--non-interactive", "--trust-server-cert"])
+                elif token:
+                    list_cmd.extend(["--username", "", "--password", token, "--non-interactive", "--trust-server-cert"])
+                else:
+                    list_cmd.extend(["--non-interactive", "--trust-server-cert"])
+                list_cmd.append(repo_url)
+
+                list_result = subprocess.run(
+                    list_cmd,
+                    capture_output=True, text=True, timeout=120
+                )
+
+                if list_result.returncode != 0:
+                    list_error = list_result.stderr
+                    if svn_password:
+                        list_error = list_error.replace(svn_password, '***')
+                    if token:
+                        list_error = list_error.replace(token, '***')
+                    raise Exception(f"SVN checkout and list both failed. Checkout error: {error_msg}. List error: {list_error}")
+
+                # Parse svn list output (one file per line)
+                file_tree_lines = []
+                excluded_dirs = {'.svn', '__pycache__', 'node_modules', '.venv', 'venv',
+                                 'dist', 'build', '.idea', '.vscode', 'target', 'bin', 'obj'}
+                for line in list_result.stdout.strip().split('\n'):
+                    line = line.strip()
+                    if not line or line.endswith('/'):
+                        # Skip directories (they end with /)
+                        # But check if any excluded dir is in the path
+                        continue
+                    # Check if path contains excluded directories
+                    parts = line.split('/')
+                    skip = False
+                    for part in parts[:-1]:  # Check directory parts only
+                        if part in excluded_dirs or part.startswith('.'):
+                            skip = True
+                            break
+                    if skip:
+                        continue
+                    # Skip hidden files
+                    filename = parts[-1]
+                    if filename.startswith('.'):
+                        continue
+                    file_tree_lines.append(line)
+
+                file_tree_str = '\n'.join(sorted(file_tree_lines))
+                return {"file_tree": file_tree_str, "readme": ""}
+
+        else:
+            # --- Git clone ---
+            from urllib.parse import urlparse, urlunparse, quote
+            parsed = urlparse(repo_url)
+            clone_url = repo_url
+            if token:
+                encoded_token = quote(token, safe='')
+                if repo_type == "gitlab":
+                    clone_url = urlunparse((parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                elif repo_type == "bitbucket":
+                    clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                else:
+                    # github, gitea, gitee all use token@host format
+                    clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+
+            # Shallow clone (depth=1) for speed
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", clone_url, tmp_dir],
+                capture_output=True, text=True, timeout=120
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.replace(token, '***') if token else result.stderr
+                raise Exception(f"Git clone failed: {error_msg}")
+
+        # Walk the cloned/checked-out repo to get file tree and README
         file_tree_lines = []
         readme_content = ""
         excluded_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.svn', '.hg',
@@ -641,12 +839,13 @@ app.add_api_websocket_route("/ws/chat", handle_websocket_chat)
 from adalflow.components.model_client.ollama_client import OllamaClient
 from adalflow.core.types import ModelType
 from api.openai_client import OpenAIClient
-from api.config import get_model_config as get_model_config_func, VLLM_API_KEY, VLLM_BASE_URL
+from api.config import get_model_config as get_model_config_func, VLLM_API_KEY, VLLM_BASE_URL, get_provider_base_url as get_base_url
 
 class DirectChatRequest(BaseModel):
     messages: List[Dict[str, str]] = Field(..., description="List of chat messages")
     provider: str = Field("deepseek", description="Model provider")
     model: Optional[str] = Field(None, description="Model name")
+    api_key: Optional[str] = Field(None, description="Optional API key override for the provider")
 
 @app.post("/chat/direct/stream")
 async def chat_direct_stream(request: DirectChatRequest):
@@ -665,6 +864,9 @@ async def chat_direct_stream(request: DirectChatRequest):
 
         model_config = get_model_config_func(request.provider, request.model)["model_kwargs"]
 
+        # Resolve API key: use per-request override if provided, else fall back to env
+        request_api_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
+
         if request.provider == "ollama":
             model = OllamaClient()
             model_kwargs = {
@@ -677,7 +879,9 @@ async def chat_direct_stream(request: DirectChatRequest):
                 }
             }
         elif request.provider == "vllm":
-            model = OpenAIClient(api_key=VLLM_API_KEY, base_url=VLLM_BASE_URL)
+            vllm_url = get_base_url("vllm")
+            vllm_key = request_api_key or VLLM_API_KEY
+            model = OpenAIClient(api_key=vllm_key, base_url=vllm_url)
             model_kwargs = {
                 "model": model_config["model"],
                 "stream": True,
@@ -687,7 +891,11 @@ async def chat_direct_stream(request: DirectChatRequest):
                 model_kwargs["top_p"] = model_config["top_p"]
         else:
             # DeepSeek or any OpenAI-compatible provider
-            model = OpenAIClient()
+            provider_url = get_base_url(request.provider)
+            if request_api_key:
+                model = OpenAIClient(api_key=request_api_key, base_url=provider_url)
+            else:
+                model = OpenAIClient(base_url=provider_url)
             model_kwargs = {
                 "model": model_config["model"],
                 "stream": True,
@@ -701,6 +909,15 @@ async def chat_direct_stream(request: DirectChatRequest):
             model_kwargs=model_kwargs,
             model_type=ModelType.LLM
         )
+
+        def strip_think_tags(text: str) -> str:
+            """Strip <think> and </think> tags from reasoning model output."""
+            import re as _re
+            # Remove <think>...</think> blocks entirely (including content)
+            cleaned = _re.sub(r'<think>.*?</think>', '', text, flags=_re.DOTALL)
+            # Also remove orphaned opening/closing tags (for streaming chunks)
+            cleaned = cleaned.replace('<think>', '').replace('</think>', '')
+            return cleaned
 
         async def generate():
             try:
@@ -727,10 +944,12 @@ async def chat_direct_stream(request: DirectChatRequest):
                             if delta is not None:
                                 text = getattr(delta, "content", None)
                                 if text is not None:
-                                    yield text
+                                    # Strip think tags for all providers (reasoning models like QWQ via vllm)
+                                    clean_text = text.replace('<think>', '').replace('</think>', '')
+                                    yield clean_text
             except Exception as e:
                 logger.error(f"Error in direct LLM streaming: {str(e)}")
-                yield f"\nError: {str(e)}"
+                yield f"\n[STREAM_ERROR] {str(e)}"
 
         return StreamingResponse(generate(), media_type="text/plain")
 

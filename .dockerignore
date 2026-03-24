@@ -13,6 +13,10 @@ yarn-error.log
 .next
 out
 
+# Python virtual environments
+venv/
+.venv/
+
 # Python cache files (but keep api/ directory)
 __pycache__/
 *.py[cod]

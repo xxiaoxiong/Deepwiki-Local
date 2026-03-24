@@ -31,6 +31,10 @@ interface ModelSelectorProps {
   customModel: string;
   setCustomModel: (value: string) => void;
 
+  // Optional API key
+  apiKey?: string;
+  setApiKey?: (value: string) => void;
+
   // File filter configuration
   showFileFilters?: boolean;
   excludedDirs?: string;
@@ -52,6 +56,10 @@ export default function UserSelector({
   setIsCustomModel,
   customModel,
   setCustomModel,
+
+  // Optional API key
+  apiKey = '',
+  setApiKey,
 
   // File filter configuration
   showFileFilters = false,
@@ -78,6 +86,12 @@ export default function UserSelector({
   // State for viewing default values
   const [showDefaultDirs, setShowDefaultDirs] = useState(false);
   const [showDefaultFiles, setShowDefaultFiles] = useState(false);
+
+  // State for provider URL editing
+  const [providerUrls, setProviderUrls] = useState<Record<string, string>>({});
+  const [editingUrl, setEditingUrl] = useState(false);
+  const [urlSaving, setUrlSaving] = useState(false);
+  const [urlSaveMsg, setUrlSaveMsg] = useState<string | null>(null);
 
   // Fetch model configurations from the backend
   useEffect(() => {
@@ -115,6 +129,70 @@ export default function UserSelector({
 
     fetchModelConfig();
   }, [provider, setModel, setProvider]);
+
+  // Fetch runtime config (provider URLs)
+  useEffect(() => {
+    const fetchRuntimeConfig = async () => {
+      try {
+        const response = await fetch('/api/models/runtime_config');
+        if (response.ok) {
+          const data = await response.json();
+          setProviderUrls(data.provider_urls || {});
+        }
+      } catch (err) {
+        console.error('Failed to fetch runtime config:', err);
+      }
+    };
+    fetchRuntimeConfig();
+  }, []);
+
+  // Save provider URL
+  const handleSaveProviderUrl = async (providerId: string, url: string) => {
+    setUrlSaving(true);
+    setUrlSaveMsg(null);
+    try {
+      const response = await fetch('/api/models/provider_url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerId, base_url: url }),
+      });
+      if (response.ok) {
+        setUrlSaveMsg('URL saved successfully');
+        setTimeout(() => setUrlSaveMsg(null), 2000);
+      } else {
+        setUrlSaveMsg('Failed to save URL');
+      }
+    } catch (err) {
+      void err;
+      setUrlSaveMsg('Error saving URL');
+    } finally {
+      setUrlSaving(false);
+    }
+  };
+
+  // Add custom model to provider
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleAddModel = async (providerId: string, modelId: string) => {
+    if (!modelId.trim()) return;
+    try {
+      const response = await fetch('/api/models/add_model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerId, model_id: modelId.trim() }),
+      });
+      if (response.ok) {
+        // Refresh model config
+        const configResponse = await fetch('/api/models/config');
+        if (configResponse.ok) {
+          const data = await configResponse.json();
+          setModelConfig(data);
+        }
+        setModel(modelId.trim());
+      }
+    } catch (err) {
+      console.error('Failed to add model:', err);
+    }
+  };
 
   // Handler for changing provider
   const handleProviderChange = (newProvider: string) => {
@@ -296,6 +374,51 @@ next.config.js
           </select>
         </div>
 
+        {/* Provider URL Configuration */}
+        {provider && (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-[var(--foreground)]">
+                {'API Base URL'}
+              </label>
+              <button
+                type="button"
+                onClick={() => setEditingUrl(!editingUrl)}
+                className="text-xs text-[var(--accent-primary)] hover:text-[var(--accent-primary)]/80 transition-colors"
+              >
+                {editingUrl ? 'Hide' : 'Edit'}
+              </button>
+            </div>
+            {editingUrl && (
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={providerUrls[provider] || ''}
+                  onChange={(e) => setProviderUrls(prev => ({ ...prev, [provider]: e.target.value }))}
+                  placeholder="e.g. http://10.0.0.1:8000/v1"
+                  className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveProviderUrl(provider, providerUrls[provider] || '')}
+                  disabled={urlSaving}
+                  className="px-3 py-1.5 text-xs rounded-md bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/80 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {urlSaving ? '...' : 'Save'}
+                </button>
+              </div>
+            )}
+            {!editingUrl && providerUrls[provider] && (
+              <div className="text-xs text-[var(--muted)] truncate" title={providerUrls[provider]}>
+                {providerUrls[provider]}
+              </div>
+            )}
+            {urlSaveMsg && (
+              <div className="text-xs text-green-500 mt-1">{urlSaveMsg}</div>
+            )}
+          </div>
+        )}
+
         {/* Model Selection - consistent height regardless of type */}
         <div>
           <label htmlFor={isCustomModel ? "custom-model-input" : "model-dropdown"} className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
@@ -330,6 +453,27 @@ next.config.js
             </select>
           )}
         </div>
+
+        {/* API Key Input (optional) */}
+        {setApiKey && (
+          <div>
+            <label htmlFor="api-key-input" className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
+              {t.form?.apiKey || 'API Key'}
+              <span className="ml-1 text-[var(--muted)] font-normal">({t.form?.optional || 'optional'})</span>
+            </label>
+            <input
+              id="api-key-input"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={t.form?.apiKeyPlaceholder || 'Enter API key for this provider'}
+              className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+            <p className="text-xs text-[var(--muted)] mt-1">
+              {t.form?.apiKeyHint || 'If set, overrides the server-side API key for this provider.'}
+            </p>
+          </div>
+        )}
 
         {/* Custom model toggle - only when provider supports it */}
         {modelConfig?.providers.find((p: Provider) => p.id === provider)?.supportsCustomModel && (

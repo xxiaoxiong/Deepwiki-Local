@@ -23,6 +23,10 @@ interface ModelSelectionModalProps {
   isComprehensiveView: boolean;
   setIsComprehensiveView: (value: boolean) => void;
 
+  // Optional API key
+  apiKey?: string;
+  setApiKey?: (value: string) => void;
+
   // File filter options - optional
   excludedDirs?: string;
   setExcludedDirs?: (value: string) => void;
@@ -37,7 +41,7 @@ interface ModelSelectionModalProps {
   
   // Token input for refresh
   showTokenInput?: boolean;
-  repositoryType?: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local';
+  repositoryType?: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn';
   // Authentication
   authRequired?: boolean;
   authCode?: string;
@@ -59,6 +63,8 @@ export default function ModelSelectionModal({
   onApply,
   isComprehensiveView,
   setIsComprehensiveView,
+  apiKey = '',
+  setApiKey,
   excludedDirs = '',
   setExcludedDirs,
   excludedFiles = '',
@@ -88,10 +94,11 @@ export default function ModelSelectionModal({
   const [localExcludedFiles, setLocalExcludedFiles] = useState(excludedFiles);
   const [localIncludedDirs, setLocalIncludedDirs] = useState(includedDirs);
   const [localIncludedFiles, setLocalIncludedFiles] = useState(includedFiles);
+  const [localApiKey, setLocalApiKey] = useState(apiKey);
   
   // Token input state
   const [localAccessToken, setLocalAccessToken] = useState('');
-  const [localSelectedPlatform, setLocalSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local'>(repositoryType);
+  const [localSelectedPlatform, setLocalSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn'>(repositoryType);
   const [showTokenSection, setShowTokenSection] = useState(showTokenInput);
 
   // Reset local state when modal is opened
@@ -106,11 +113,12 @@ export default function ModelSelectionModal({
       setLocalExcludedFiles(excludedFiles);
       setLocalIncludedDirs(includedDirs);
       setLocalIncludedFiles(includedFiles);
+      setLocalApiKey(apiKey);
       setLocalSelectedPlatform(repositoryType);
       setLocalAccessToken('');
       setShowTokenSection(showTokenInput);
     }
-  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, excludedDirs, excludedFiles, includedDirs, includedFiles, repositoryType, showTokenInput]);
+  }, [isOpen, provider, model, isCustomModel, customModel, isComprehensiveView, excludedDirs, excludedFiles, includedDirs, includedFiles, apiKey, repositoryType, showTokenInput]);
 
   // Handler for applying changes
   const handleApply = () => {
@@ -123,6 +131,7 @@ export default function ModelSelectionModal({
     if (setExcludedFiles) setExcludedFiles(localExcludedFiles);
     if (setIncludedDirs) setIncludedDirs(localIncludedDirs);
     if (setIncludedFiles) setIncludedFiles(localIncludedFiles);
+    if (setApiKey) setApiKey(localApiKey);
     
     // Pass token to onApply if needed
     if (showTokenInput) {
@@ -178,6 +187,8 @@ export default function ModelSelectionModal({
               setIsCustomModel={setLocalIsCustomModel}
               customModel={localCustomModel}
               setCustomModel={setLocalCustomModel}
+              apiKey={localApiKey}
+              setApiKey={setApiKey ? setLocalApiKey : undefined}
               showFileFilters={showFileFilters}
               excludedDirs={localExcludedDirs}
               setExcludedDirs={showFileFilters ? (value: string) => setLocalExcludedDirs(value) : undefined}

@@ -68,6 +68,22 @@ const nextConfig: NextConfig = {
         destination: `${TARGET_SERVER_BASE_URL}/models/config`,
       },
       {
+        source: '/api/models/runtime_config',
+        destination: `${TARGET_SERVER_BASE_URL}/models/runtime_config`,
+      },
+      {
+        source: '/api/models/provider_url',
+        destination: `${TARGET_SERVER_BASE_URL}/models/provider_url`,
+      },
+      {
+        source: '/api/models/add_model',
+        destination: `${TARGET_SERVER_BASE_URL}/models/add_model`,
+      },
+      {
+        source: '/api/upload/repo',
+        destination: `${TARGET_SERVER_BASE_URL}/upload/repo`,
+      },
+      {
         source: '/api/processed_projects',
         destination: `${TARGET_SERVER_BASE_URL}/api/processed_projects`,
       },

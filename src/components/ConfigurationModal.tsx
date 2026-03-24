@@ -31,9 +31,13 @@ interface ConfigurationModalProps {
   customModel: string;
   setCustomModel: (value: string) => void;
 
+  // Optional API key
+  apiKey?: string;
+  setApiKey?: (value: string) => void;
+
   // Platform selection
-  selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local';
-  setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local') => void;
+  selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn';
+  setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn') => void;
 
   // Access token
   accessToken: string;
@@ -77,6 +81,8 @@ export default function ConfigurationModal({
   setIsCustomModel,
   customModel,
   setCustomModel,
+  apiKey,
+  setApiKey,
   selectedPlatform,
   setSelectedPlatform,
   accessToken,
@@ -219,6 +225,8 @@ export default function ConfigurationModal({
                 setIsCustomModel={setIsCustomModel}
                 customModel={customModel}
                 setCustomModel={setCustomModel}
+                apiKey={apiKey}
+                setApiKey={setApiKey}
                 showFileFilters={true}
                 excludedDirs={excludedDirs}
                 setExcludedDirs={setExcludedDirs}

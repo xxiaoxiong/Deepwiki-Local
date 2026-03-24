@@ -191,6 +191,7 @@ export default function RepoWikiPage() {
   const modelParam = searchParams.get('model') || '';
   const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
   const customModelParam = searchParams.get('custom_model') || '';
+  const apiKeyParam = searchParams.get('api_key') ? decodeURIComponent(searchParams.get('api_key') || '') : '';
   const language = searchParams.get('language') || 'en';
   const repoHost = (() => {
     if (!repoUrl) return '';
@@ -247,6 +248,7 @@ export default function RepoWikiPage() {
   const [selectedModelState, setSelectedModelState] = useState(modelParam);
   const [isCustomSelectedModelState, setIsCustomSelectedModelState] = useState(isCustomModelParam);
   const [customSelectedModelState, setCustomSelectedModelState] = useState(customModelParam);
+  const [apiKeyState, setApiKeyState] = useState(apiKeyParam);
   const [showModelOptions, setShowModelOptions] = useState(false); // Controls whether to show model options
   const excludedDirs = searchParams.get('excluded_dirs') || '';
   const excludedFiles = searchParams.get('excluded_files') || '';
@@ -565,6 +567,7 @@ Remember:
           messages: [{ role: 'user', content: fullPromptContent }],
           provider: selectedProviderState || 'deepseek',
           model: selectedModelState || undefined,
+          api_key: apiKeyState || undefined,
         };
 
         let content = '';
@@ -598,6 +601,16 @@ Remember:
           console.error('Error reading stream:', readError);
           throw new Error('Error processing response stream');
         }
+
+        // Check for streaming errors from backend
+        if (content.includes('[STREAM_ERROR]')) {
+          const errorMatch = content.match(/\[STREAM_ERROR\]\s*(.*)/);
+          const errorDetail = errorMatch ? errorMatch[1].trim() : 'Unknown streaming error';
+          throw new Error(`LLM streaming error: ${errorDetail}`);
+        }
+
+        // Strip <think>...</think> blocks from reasoning model output
+        content = content.replace(/<think>[\s\S]*?<\/think>/g, '');
 
         // Clean up markdown delimiters
         content = content.replace(/^```markdown\s*/i, '').replace(/```\s*$/i, '');
@@ -636,7 +649,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
@@ -803,6 +816,7 @@ IMPORTANT:
           messages: requestBody.messages,
           provider: requestBody.provider || selectedProviderState || 'deepseek',
           model: requestBody.model || selectedModelState || undefined,
+          api_key: apiKeyState || undefined,
         };
 
         const response = await fetch(`/chat/direct/stream`, {
@@ -833,6 +847,17 @@ IMPORTANT:
         }
       }
 
+      // Check for streaming errors from backend
+      if (responseText.includes('[STREAM_ERROR]')) {
+        const errorMatch = responseText.match(/\[STREAM_ERROR\]\s*(.*)/);
+        const errorDetail = errorMatch ? errorMatch[1].trim() : 'Unknown streaming error';
+        if (errorDetail.includes('OPENAI_API_KEY')) {
+          setEmbeddingError(true);
+          throw new Error('OPENAI_API_KEY environment variable is not set. Please configure your OpenAI API key or provide one in the model settings.');
+        }
+        throw new Error(`LLM streaming error: ${errorDetail}`);
+      }
+
       if(responseText.includes('Error preparing retriever: Environment variable OPENAI_API_KEY must be set')) {
          setEmbeddingError(true);
          throw new Error('OPENAI_API_KEY environment variable is not set. Please configure your OpenAI API key.');
@@ -843,13 +868,18 @@ IMPORTANT:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
+      // Strip <think>...</think> blocks from reasoning model output
+      responseText = responseText.replace(/<think>[\s\S]*?<\/think>/g, '');
+
         // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
 
       // Extract wiki structure from response
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
-        throw new Error('No valid XML found in response');
+        const preview = responseText.substring(0, 500).trim();
+        console.error('No valid XML found. Response preview:', preview);
+        throw new Error(`No valid XML found in LLM response. Response preview: ${preview.substring(0, 200)}...`);
       }
 
       let xmlText = xmlMatch[0];
@@ -1065,7 +1095,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async () => {
@@ -1383,8 +1413,8 @@ IMPORTANT:
           console.warn('Could not fetch Bitbucket README.md, continuing with empty README', err);
         }
       }
-      else if (effectiveRepoInfo.type === 'gitea' || effectiveRepoInfo.type === 'gitee') {
-        // Gitea/Gitee: fetch structure via backend to avoid CORS
+      else if (effectiveRepoInfo.type === 'gitea' || effectiveRepoInfo.type === 'gitee' || effectiveRepoInfo.type === 'svn') {
+        // Gitea/Gitee/SVN: fetch structure via backend to avoid CORS
         try {
           const params = new URLSearchParams({
             repo_url: effectiveRepoInfo.repoUrl || `https://gitee.com/${owner}/${repo}`,
@@ -2184,6 +2214,8 @@ IMPORTANT:
         setIsCustomModel={setIsCustomSelectedModelState}
         customModel={customSelectedModelState}
         setCustomModel={setCustomSelectedModelState}
+        apiKey={apiKeyState}
+        setApiKey={setApiKeyState}
         isComprehensiveView={isComprehensiveView}
         setIsComprehensiveView={setIsComprehensiveView}
         showFileFilters={true}

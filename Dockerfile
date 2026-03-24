@@ -1,9 +1,7 @@
-# syntax=docker/dockerfile:1-labs
-
 # Build argument for custom certificates directory
 ARG CUSTOM_CERT_DIR="certs"
 
-FROM node:20-alpine3.22 AS node_base
+FROM node:20-alpine AS node_base
 
 FROM node_base AS node_deps
 WORKDIR /app
@@ -71,13 +69,18 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=py_deps /api/.venv /opt/venv
 COPY api/ ./api/
 
+# Pre-download tiktoken encoding files for offline use (fixes DNS resolution error in air-gapped environments)
+ENV TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
+RUN mkdir -p /app/tiktoken_cache && \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); print('tiktoken encodings cached successfully')"
+
 # Copy Node app
 COPY --from=node_builder /app/public ./public
 COPY --from=node_builder /app/.next/standalone ./
 COPY --from=node_builder /app/.next/static ./.next/static
 
 # Expose the port the app runs on
-EXPOSE ${PORT:-8001} 3000
+EXPOSE ${PORT:-8001} 3001
 
 # Create a script to run both backend and frontend
 RUN echo '#!/bin/bash\n\
@@ -86,23 +89,29 @@ if [ -f .env ]; then\n\
   export $(grep -v "^#" .env | xargs -r)\n\
 fi\n\
 \n\
-# Check for required environment variables\n\
-if [ -z "$OPENAI_API_KEY" ] || [ -z "$GOOGLE_API_KEY" ]; then\n\
-  echo "Warning: OPENAI_API_KEY and/or GOOGLE_API_KEY environment variables are not set."\n\
-  echo "These are required for DeepWiki to function properly."\n\
-  echo "You can provide them via a mounted .env file or as environment variables when running the container."\n\
-fi\n\
+echo "DeepWiki starting..."\n\
+echo "  Backend API port: ${PORT:-8001}"\n\
+echo "  Frontend port: ${WEB_PORT:-3001}"\n\
+echo "  VLLM_BASE_URL: ${VLLM_BASE_URL:-not set}"\n\
+echo "  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-not set}"\n\
 \n\
 # Start the API server in the background with the configured port\n\
 python -m api.main --port ${PORT:-8001} &\n\
-PORT=3000 HOSTNAME=0.0.0.0 node server.js &\n\
+PORT=${WEB_PORT:-3001} HOSTNAME=0.0.0.0 node server.js &\n\
 wait -n\n\
 exit $?' > /app/start.sh && chmod +x /app/start.sh
 
 # Set environment variables
 ENV PORT=8001
+ENV WEB_PORT=3001
 ENV NODE_ENV=production
 ENV SERVER_BASE_URL=http://localhost:${PORT:-8001}
+
+# Offline / air-gapped environment settings
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_HUB_OFFLINE=1
+ENV ADALFLOW_DISABLE_TELEMETRY=1
 
 # Create empty .env file (will be overridden if one exists at runtime)
 RUN touch .env
