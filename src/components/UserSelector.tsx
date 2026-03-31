@@ -89,7 +89,6 @@ export default function UserSelector({
 
   // State for provider URL editing
   const [providerUrls, setProviderUrls] = useState<Record<string, string>>({});
-  const [editingUrl, setEditingUrl] = useState(false);
   const [urlSaving, setUrlSaving] = useState(false);
   const [urlSaveMsg, setUrlSaveMsg] = useState<string | null>(null);
 
@@ -381,77 +380,47 @@ next.config.js
               <label className="block text-xs font-medium text-[var(--foreground)]">
                 {'API Base URL'}
               </label>
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={providerUrls[provider] || ''}
+                onChange={(e) => setProviderUrls(prev => ({ ...prev, [provider]: e.target.value }))}
+                placeholder="e.g. http://10.0.0.1:8000/v1"
+                className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
               <button
                 type="button"
-                onClick={() => setEditingUrl(!editingUrl)}
-                className="text-xs text-[var(--accent-primary)] hover:text-[var(--accent-primary)]/80 transition-colors"
+                onClick={() => handleSaveProviderUrl(provider, providerUrls[provider] || '')}
+                disabled={urlSaving}
+                className="px-3 py-1.5 text-xs rounded-md bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/80 disabled:opacity-50 whitespace-nowrap"
               >
-                {editingUrl ? 'Hide' : 'Edit'}
+                {urlSaving ? '...' : 'Save'}
               </button>
             </div>
-            {editingUrl && (
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  value={providerUrls[provider] || ''}
-                  onChange={(e) => setProviderUrls(prev => ({ ...prev, [provider]: e.target.value }))}
-                  placeholder="e.g. http://10.0.0.1:8000/v1"
-                  className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleSaveProviderUrl(provider, providerUrls[provider] || '')}
-                  disabled={urlSaving}
-                  className="px-3 py-1.5 text-xs rounded-md bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/80 disabled:opacity-50 whitespace-nowrap"
-                >
-                  {urlSaving ? '...' : 'Save'}
-                </button>
-              </div>
-            )}
-            {!editingUrl && providerUrls[provider] && (
-              <div className="text-xs text-[var(--muted)] truncate" title={providerUrls[provider]}>
-                {providerUrls[provider]}
-              </div>
-            )}
             {urlSaveMsg && (
               <div className="text-xs text-green-500 mt-1">{urlSaveMsg}</div>
             )}
           </div>
         )}
 
-        {/* Model Selection - consistent height regardless of type */}
+        {/* Model Selection - always free text input */}
         <div>
-          <label htmlFor={isCustomModel ? "custom-model-input" : "model-dropdown"} className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
+          <label htmlFor="model-input" className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
             {t.form?.modelSelection || 'Model Selection'}
           </label>
-
-          {isCustomModel ? (
-            <input
-              id="custom-model-input"
-              type="text"
-              value={customModel}
-              onChange={(e) => {
-                setCustomModel(e.target.value);
-                setModel(e.target.value);
-              }}
-              placeholder={t.form?.customModelPlaceholder || 'Enter custom model name'}
-              className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          ) : (
-            <select
-              id="model-dropdown"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-              disabled={!provider || isLoading || !modelConfig?.providers.find(p => p.id === provider)?.models?.length}
-            >
-              {modelConfig?.providers.find((p: Provider) => p.id === provider)?.models.map((modelOption) => (
-                <option key={modelOption.id} value={modelOption.id}>
-                  {modelOption.name}
-                </option>
-              )) || <option value="">{t.form?.selectModel || 'Select Model'}</option>}
-            </select>
-          )}
+          <input
+            id="model-input"
+            type="text"
+            value={customModel || model}
+            onChange={(e) => {
+              setModel(e.target.value);
+              setCustomModel(e.target.value);
+              if (!isCustomModel) setIsCustomModel(true);
+            }}
+            placeholder={t.form?.customModelPlaceholder || 'Enter model name'}
+            className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+          />
         </div>
 
         {/* API Key Input (optional) */}
@@ -475,47 +444,6 @@ next.config.js
           </div>
         )}
 
-        {/* Custom model toggle - only when provider supports it */}
-        {modelConfig?.providers.find((p: Provider) => p.id === provider)?.supportsCustomModel && (
-          <div className="mb-2">
-            <div className="flex items-center pb-1">
-              <div
-                className="relative flex items-center cursor-pointer"
-                onClick={() => {
-                  const newValue = !isCustomModel;
-                  setIsCustomModel(newValue);
-                  if (newValue) {
-                    setCustomModel(model);
-                  }
-                }}
-              >
-                <input
-                  id="use-custom-model"
-                  type="checkbox"
-                  checked={isCustomModel}
-                  onChange={() => {}}
-                  className="sr-only"
-                />
-                <div className={`w-10 h-5 rounded-full transition-colors ${isCustomModel ? 'bg-[var(--accent-primary)]' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
-                <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${isCustomModel ? 'translate-x-5' : ''}`}></div>
-              </div>
-              <label
-                htmlFor="use-custom-model"
-                className="ml-2 text-sm font-medium text-[var(--muted)] cursor-pointer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  const newValue = !isCustomModel;
-                  setIsCustomModel(newValue);
-                  if (newValue) {
-                    setCustomModel(model);
-                  }
-                }}
-              >
-                {t.form?.useCustomModel || 'Use custom model'}
-              </label>
-            </div>
-          </div>
-        )}
 
         {showFileFilters && (
           <div className="mt-4">

@@ -62,6 +62,7 @@ const Ask: React.FC<AskProps> = ({
   const [selectedModel, setSelectedModel] = useState(model);
   const [isCustomSelectedModel, setIsCustomSelectedModel] = useState(isCustomModel);
   const [customSelectedModel, setCustomSelectedModel] = useState(customModel);
+  const [selectedApiKey, setSelectedApiKey] = useState('');
   const [isModelSelectionModalOpen, setIsModelSelectionModalOpen] = useState(false);
   const [isComprehensiveView, setIsComprehensiveView] = useState(true);
 
@@ -320,7 +321,8 @@ const Ask: React.FC<AskProps> = ({
         messages: newHistory.map(msg => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
         provider: selectedProvider,
         model: isCustomSelectedModel ? customSelectedModel : selectedModel,
-        language: language
+        language: language,
+        api_key: selectedApiKey || undefined
       };
 
       // Add tokens if available
@@ -562,7 +564,8 @@ const Ask: React.FC<AskProps> = ({
         messages: newHistory.map(msg => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
         provider: selectedProvider,
         model: isCustomSelectedModel ? customSelectedModel : selectedModel,
-        language: language
+        language: language,
+        api_key: selectedApiKey || undefined
       };
 
       // Add tokens if available
@@ -911,6 +914,8 @@ const Ask: React.FC<AskProps> = ({
         setIsCustomModel={setIsCustomSelectedModel}
         customModel={customSelectedModel}
         setCustomModel={setCustomSelectedModel}
+        apiKey={selectedApiKey}
+        setApiKey={setSelectedApiKey}
         isComprehensiveView={isComprehensiveView}
         setIsComprehensiveView={setIsComprehensiveView}
         showFileFilters={false}
