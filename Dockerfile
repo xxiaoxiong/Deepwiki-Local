@@ -75,9 +75,8 @@ ENV TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
 RUN mkdir -p /app/tiktoken_cache && \
     python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); print('tiktoken encodings cached successfully')"
 
-# sentence-transformers is installed via poetry (pyproject.toml).
-# The model (BAAI/bge-small-zh-v1.5) will be downloaded at first runtime
-# into the persistent ~/.adalflow/models volume.
+# Copy pre-downloaded BAAI/bge-small-zh-v1.5 model from local build context (no network needed at build time)
+COPY models/bge-small-zh-v1.5/ /app/models/BAAI/bge-small-zh-v1.5/
 
 # Copy Node app
 COPY --from=node_builder /app/public ./public
@@ -111,6 +110,8 @@ ENV PORT=8001
 ENV WEB_PORT=3001
 ENV NODE_ENV=production
 ENV SERVER_BASE_URL=http://localhost:${PORT:-8001}
+ENV LOCAL_EMBEDDING_MODEL_PATH=/app/models/BAAI/bge-small-zh-v1.5
+ENV LOCAL_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 
 # Offline / air-gapped environment settings
 ENV NEXT_TELEMETRY_DISABLED=1

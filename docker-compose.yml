@@ -22,7 +22,7 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       - EMBEDDER_TYPE=local
       - LOCAL_EMBEDDING_MODEL=${LOCAL_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
-      - LOCAL_EMBEDDING_MODEL_PATH=${LOCAL_EMBEDDING_MODEL_PATH:-/root/.adalflow/hf_cache/hub/models--BAAI--bge-small-zh-v1.5/snapshots/7999e1d3359715c523056ef9478215996d62a620}
+      - LOCAL_EMBEDDING_MODEL_PATH=${LOCAL_EMBEDDING_MODEL_PATH:-/app/models/BAAI/bge-small-zh-v1.5}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # vLLM configuration (point to your intranet vLLM service)

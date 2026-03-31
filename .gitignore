@@ -1,5 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Local model files (baked into Docker image via COPY; re-generate with export-image.ps1)
+models/
+
+# Exported Docker image
+*.tar
+
 # dependencies
 /node_modules
 /.pnp
