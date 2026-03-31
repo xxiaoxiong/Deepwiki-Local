@@ -262,6 +262,7 @@ export default function RepoWikiPage() {
 
   // Wiki type state - default to comprehensive view
   const isComprehensiveParam = searchParams.get('comprehensive') !== 'false';
+  const forceRegenerate = searchParams.get('force') === 'true';
   const [isComprehensiveView, setIsComprehensiveView] = useState(isComprehensiveParam);
   // Using useRef for activeContentRequests to maintain a single instance across renders
   // This map tracks which pages are currently being processed to prevent duplicate requests
@@ -1651,8 +1652,13 @@ IMPORTANT:
       effectRan.current = true; // Set to true immediately to prevent re-entry due to StrictMode
 
       const loadData = async () => {
-        // Try loading from server-side cache first
-        setLoadingMessage(messages.loading?.fetchingCache || 'Checking for cached wiki...');
+        // If force=true (from form submit), skip cache and regenerate fresh
+        if (forceRegenerate) {
+          fetchRepositoryStructure();
+          return;
+        }
+
+        // Otherwise try to load from server-side cache first (history view)
         try {
           const params = new URLSearchParams({
             owner: effectiveRepoInfo.owner,

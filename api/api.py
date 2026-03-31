@@ -1,5 +1,6 @@
 import os
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -17,10 +18,29 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时初始化调度器
+    try:
+        from api.scheduler import get_scheduler
+        get_scheduler()
+        logger.info("定时任务调度器已启动")
+    except Exception as e:
+        logger.warning(f"调度器启动失败（非致命）: {e}")
+    yield
+    # 关闭时停止调度器
+    try:
+        from api.scheduler import shutdown_scheduler
+        shutdown_scheduler()
+    except Exception:
+        pass
+
+
 # 初始化 FastAPI 应用
 app = FastAPI(
     title="Streaming API",
-    description="流式聊天补全 API"
+    description="流式聊天补全 API",
+    lifespan=lifespan,
 )
 
 # 配置跨域资源共享（CORS）
@@ -1185,3 +1205,103 @@ async def get_processed_projects():
     except Exception as e:
         logger.error(f"Error listing processed projects from {WIKI_CACHE_DIR}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list processed projects from server cache.")
+
+
+# ─────────────────────────────────────────────
+# 定时拉取调度任务 API
+# ─────────────────────────────────────────────
+
+class ScheduleCreateRequest(BaseModel):
+    name: str
+    repo_url: str
+    repo_type: str = "gitlab"
+    access_token: str = ""
+    interval_hours: int = 24
+    cron_expr: str = ""
+    enabled: bool = True
+    excluded_dirs: str = ""
+    excluded_files: str = ""
+
+
+class ScheduleUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    repo_url: Optional[str] = None
+    repo_type: Optional[str] = None
+    access_token: Optional[str] = None
+    interval_hours: Optional[int] = None
+    cron_expr: Optional[str] = None
+    enabled: Optional[bool] = None
+    excluded_dirs: Optional[str] = None
+    excluded_files: Optional[str] = None
+
+
+@app.get("/api/schedules")
+async def list_schedules_endpoint():
+    """列出所有定时拉取任务。"""
+    try:
+        from api.scheduler import list_schedules
+        return list_schedules()
+    except Exception as e:
+        logger.error(f"列出调度任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/schedules", status_code=201)
+async def create_schedule_endpoint(req: ScheduleCreateRequest):
+    """创建新的定时拉取任务。"""
+    try:
+        from api.scheduler import create_schedule
+        return create_schedule(req.model_dump())
+    except Exception as e:
+        logger.error(f"创建调度任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def update_schedule_endpoint(schedule_id: str, req: ScheduleUpdateRequest):
+    """更新指定调度任务。"""
+    try:
+        from api.scheduler import update_schedule
+        data = {k: v for k, v in req.model_dump().items() if v is not None}
+        result = update_schedule(schedule_id, data)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新调度任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule_endpoint(schedule_id: str):
+    """删除指定调度任务。"""
+    try:
+        from api.scheduler import delete_schedule
+        ok = delete_schedule(schedule_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return {"message": "Deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除调度任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/schedules/{schedule_id}/trigger")
+async def trigger_schedule_endpoint(schedule_id: str):
+    """立即手动触发一次调度任务。"""
+    try:
+        from api.scheduler import get_schedule, trigger_schedule_now
+        cfg = get_schedule(schedule_id)
+        if cfg is None:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        trigger_schedule_now(schedule_id)
+        return {"message": "Triggered"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"手动触发调度任务失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

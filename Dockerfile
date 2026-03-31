@@ -28,6 +28,7 @@ RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
     poetry config virtualenvs.create true --local && \
     poetry config virtualenvs.in-project true --local && \
     poetry config virtualenvs.options.always-copy --local true && \
+    poetry lock --no-interaction --no-ansi && \
     POETRY_MAX_WORKERS=10 poetry install --no-interaction --no-ansi --only main && \
     poetry cache clear --all .
 
@@ -73,6 +74,10 @@ COPY api/ ./api/
 ENV TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
 RUN mkdir -p /app/tiktoken_cache && \
     python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); print('tiktoken encodings cached successfully')"
+
+# sentence-transformers is installed via poetry (pyproject.toml).
+# The model (BAAI/bge-small-zh-v1.5) will be downloaded at first runtime
+# into the persistent ~/.adalflow/models volume.
 
 # Copy Node app
 COPY --from=node_builder /app/public ./public

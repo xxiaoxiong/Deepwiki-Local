@@ -10,7 +10,7 @@ import base64
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from api.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
+from api.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES, get_embedder_type
 from api.ollama_patch import OllamaDocumentProcessor
 from urllib.parse import urlparse, urlunparse, quote
 import requests
@@ -295,8 +295,9 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
     for ext in code_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
+            relative_path = os.path.relpath(file_path, path)
             # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
+            if not should_process_file(relative_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
                 continue
 
             try:
@@ -336,8 +337,9 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
     for ext in doc_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
+            relative_path = os.path.relpath(file_path, path)
             # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
+            if not should_process_file(relative_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
                 continue
 
             try:
@@ -398,7 +400,19 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     embedder = get_embedder(embedder_type=embedder_type)
 
     # Choose appropriate processor based on embedder type
-    if embedder_type == 'ollama':
+    if embedder_type == 'local':
+        # Use local sentence-transformers document processor
+        from api.sentence_transformer_client import SentenceTransformerDocumentProcessor
+        local_cfg = embedder_config if embedder_config else {}
+        # 优先使用 LOCAL_EMBEDDING_MODEL 环境变量（docker-compose.yml 中设置），其次读取配置文件
+        model_name = os.environ.get("LOCAL_EMBEDDING_MODEL") or local_cfg.get("model_name", "BAAI/bge-small-zh-v1.5")
+        model_path = os.environ.get("LOCAL_EMBEDDING_MODEL_PATH") or local_cfg.get("model_path", None)
+        if model_path and "${" in str(model_path):
+            model_path = None
+        embedder_transformer = SentenceTransformerDocumentProcessor(
+            model_name=model_name, model_path=model_path
+        )
+    elif embedder_type == 'ollama':
         # Use Ollama document processor for single-document processing
         embedder_transformer = OllamaDocumentProcessor(embedder=embedder)
     else:
@@ -865,12 +879,12 @@ class DatabaseManager:
 
                 save_repo_dir = os.path.join(root_path, "repos", repo_name)
 
-                # Check if the repository directory already exists and is not empty
-                if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
-                    # Only download if the repository doesn't exist or is empty
-                    download_repo(repo_url_or_path, save_repo_dir, repo_type, access_token)
-                else:
-                    logger.info(f"Repository already exists at {save_repo_dir}. Using existing repository.")
+                # Always re-clone to get the latest code (skip cache)
+                if os.path.exists(save_repo_dir):
+                    import shutil
+                    logger.info(f"Removing existing repository at {save_repo_dir} for fresh clone.")
+                    shutil.rmtree(save_repo_dir, ignore_errors=True)
+                download_repo(repo_url_or_path, save_repo_dir, repo_type, access_token)
             else:  # local path
                 repo_name = os.path.basename(repo_url_or_path)
                 save_repo_dir = repo_url_or_path
@@ -927,34 +941,8 @@ class DatabaseManager:
         # Handle backward compatibility
         if embedder_type is None and is_ollama_embedder is not None:
             embedder_type = 'ollama' if is_ollama_embedder else None
-        # check the database
-        if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
-            logger.info("Loading existing database...")
-            try:
-                self.db = LocalDB.load_state(self.repo_paths["save_db_file"])
-                documents = self.db.get_transformed_data(key="split_and_embed")
-                if documents:
-                    lengths = [_embedding_vector_length(doc) for doc in documents]
-                    non_empty = sum(1 for n in lengths if n > 0)
-                    empty = len(lengths) - non_empty
-                    sample_sizes = sorted({n for n in lengths if n > 0})[:3]
-                    logger.info(
-                        "Loaded %s documents from existing database (embeddings: %s non-empty, %s empty; sample_dims=%s)",
-                        len(documents),
-                        non_empty,
-                        empty,
-                        sample_sizes,
-                    )
-
-                    if non_empty == 0:
-                        logger.warning(
-                            "Existing database contains no usable embeddings. Rebuilding embeddings..."
-                        )
-                    else:
-                        return documents
-            except Exception as e:
-                logger.error(f"Error loading existing database: {e}")
-                # Continue to create a new database
+        # Always skip cache and rebuild fresh embeddings
+        logger.info("Skipping embedding cache - rebuilding database from scratch.")
 
         # prepare the database
         logger.info("Creating new database...")
@@ -972,6 +960,26 @@ class DatabaseManager:
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")
         logger.info(f"Total transformed documents: {len(transformed_docs)}")
+
+        # Early detection: check if all docs have None vectors (embedding API silently failed)
+        if transformed_docs:
+            docs_with_vectors = [d for d in transformed_docs if getattr(d, 'vector', None) is not None]
+            if len(docs_with_vectors) == 0:
+                resolved_type = embedder_type or get_embedder_type()
+                logger.error(
+                    f"All {len(transformed_docs)} transformed documents have no embedding vectors. "
+                    f"Embedder type='{resolved_type}'. "
+                    "This likely means the embedding API call failed silently. "
+                    "Check API key, base URL, and that the model supports embeddings. "
+                    "To use local embeddings set DEEPWIKI_EMBEDDER_TYPE=local in your .env file."
+                )
+                raise ValueError(
+                    f"Embedding failed: 0/{len(transformed_docs)} documents received embeddings. "
+                    f"Embedder type='{resolved_type}'. "
+                    "If using DeepSeek as base URL, it does not support OpenAI embedding models. "
+                    "Set DEEPWIKI_EMBEDDER_TYPE=local in your .env to use local sentence-transformers."
+                )
+
         return transformed_docs
 
     def prepare_retriever(self, repo_url_or_path: str, repo_type: str = None, access_token: str = None):

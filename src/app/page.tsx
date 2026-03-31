@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { FaWikipediaW, FaGithub, FaCoffee, FaTwitter } from 'react-icons/fa';
+import { FaWikipediaW, FaGithub, FaCoffee, FaTwitter, FaClock } from 'react-icons/fa';
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
 import ConfigurationModal from '@/components/ConfigurationModal';
@@ -388,8 +388,10 @@ export default function Home() {
     if (accessToken) {
       params.append('token', accessToken);
     }
-    // Always include the type parameter - use auto-detected type from URL parsing
-    params.append('type', type || selectedPlatform || 'github');
+    // If user provided access token, use their explicitly selected platform (they chose it in the modal)
+    // Otherwise use auto-detected type from URL (more reliable for known public domains)
+    const finalType = accessToken ? selectedPlatform : (type || selectedPlatform || 'github');
+    params.append('type', finalType);
     // Add local path if it exists
     if (localPath) {
       params.append('local_path', encodeURIComponent(localPath));
@@ -427,6 +429,9 @@ export default function Home() {
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
 
+    // Signal to wiki page to skip cache and force fresh generation
+    params.append('force', 'true');
+
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
     // Navigate to the dynamic route
@@ -448,10 +453,15 @@ export default function Home() {
               <h1 className="text-xl md:text-2xl font-bold text-[var(--accent-primary)]">{t('common.appName')}</h1>
               <div className="flex flex-wrap items-baseline gap-x-2 md:gap-x-3 mt-0.5">
                 <p className="text-xs text-[var(--muted)] whitespace-nowrap">{t('common.tagline')}</p>
-                <div className="hidden md:inline-block">
+                <div className="hidden md:flex items-center gap-3">
                   <Link href="/wiki/projects"
                     className="text-xs font-medium text-[var(--accent-primary)] hover:text-[var(--highlight)] hover:underline whitespace-nowrap">
                     {t('nav.wikiProjects')}
+                  </Link>
+                  <Link href="/schedules"
+                    className="text-xs font-medium text-[var(--accent-primary)] hover:text-[var(--highlight)] hover:underline whitespace-nowrap flex items-center gap-1">
+                    <FaClock size={10} />
+                    定时任务
                   </Link>
                 </div>
               </div>
@@ -499,7 +509,7 @@ export default function Home() {
                   className="px-4 py-2.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 text-sm whitespace-nowrap disabled:opacity-50"
                   title="Upload a ZIP file of your source code (for code on your local machine)"
                 >
-                  {isUploading ? 'Uploading...' : 'Upload ZIP'}
+                  {isUploading ? '上传中...' : '上传 ZIP'}
                 </button>
               </div>
             </div>
