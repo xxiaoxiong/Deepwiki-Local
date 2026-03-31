@@ -7,6 +7,7 @@ import { FaWikipediaW, FaGithub, FaCoffee, FaTwitter, FaClock } from 'react-icon
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
 import ConfigurationModal from '@/components/ConfigurationModal';
+import ModelManagementModal from '@/components/ModelManagementModal';
 import ProcessedProjects from '@/components/ProcessedProjects';
 import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
@@ -287,6 +288,7 @@ export default function Home() {
 
   // State for configuration modal
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isModelMgmtOpen, setIsModelMgmtOpen] = useState(false);
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,6 +465,16 @@ export default function Home() {
                     <FaClock size={10} />
                     定时任务
                   </Link>
+                  <button
+                    type="button"
+                    onClick={() => setIsModelMgmtOpen(true)}
+                    className="text-xs font-medium text-[var(--accent-primary)] hover:text-[var(--highlight)] hover:underline whitespace-nowrap flex items-center gap-1"
+                  >
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18" />
+                    </svg>
+                    模型预设
+                  </button>
                 </div>
               </div>
             </div>
@@ -517,6 +529,12 @@ export default function Home() {
               <div className="text-xs text-green-500 mt-1 ml-1">{uploadMsg}</div>
             )}
           </form>
+
+          {/* Model Management Modal */}
+          <ModelManagementModal
+            isOpen={isModelMgmtOpen}
+            onClose={() => setIsModelMgmtOpen(false)}
+          />
 
           {/* Configuration Modal */}
           <ConfigurationModal

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { fetchModelPresets, ModelPreset } from './ModelManagementModal';
 
 // Define the interfaces for our model configuration
 interface Model {
@@ -91,6 +92,13 @@ export default function UserSelector({
   const [providerUrls, setProviderUrls] = useState<Record<string, string>>({});
   const [urlSaving, setUrlSaving] = useState(false);
   const [urlSaveMsg, setUrlSaveMsg] = useState<string | null>(null);
+
+  // Model presets from server
+  const [modelPresets, setModelPresets] = useState<ModelPreset[]>([]);
+
+  useEffect(() => {
+    fetchModelPresets().then(setModelPresets);
+  }, []);
 
   // Fetch model configurations from the backend
   useEffect(() => {
@@ -409,6 +417,37 @@ next.config.js
           <label htmlFor="model-input" className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
             {t.form?.modelSelection || 'Model Selection'}
           </label>
+
+          {/* Quick-select preset chips */}
+          {modelPresets.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {modelPresets.map((preset, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    handleProviderChange(preset.provider);
+                    setTimeout(() => {
+                      setModel(preset.name);
+                      setCustomModel(preset.name);
+                      setIsCustomModel(true);
+                      if (preset.base_url) {
+                        setProviderUrls(prev => ({ ...prev, [preset.provider]: preset.base_url! }));
+                      }
+                      if (preset.api_key && setApiKey) {
+                        setApiKey(preset.api_key);
+                      }
+                    }, 15);
+                  }}
+                  title={`${preset.provider} / ${preset.name}`}
+                  className="px-2 py-0.5 text-xs rounded-full border border-[var(--accent-primary)]/40 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10 transition-colors truncate max-w-[12rem]"
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           <input
             id="model-input"
             type="text"

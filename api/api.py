@@ -208,6 +208,54 @@ async def update_provider_url(request: ProviderUrlUpdate):
     set_provider_base_url(request.provider, request.base_url)
     return {"success": True, "provider": request.provider, "base_url": request.base_url}
 
+PRESETS_FILE = os.environ.get(
+    "MODEL_PRESETS_FILE",
+    os.path.join(os.path.expanduser("~"), ".adalflow", "model_presets.json")
+)
+
+def _load_presets() -> list:
+    try:
+        if os.path.exists(PRESETS_FILE):
+            with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def _save_presets(presets: list):
+    os.makedirs(os.path.dirname(PRESETS_FILE), exist_ok=True)
+    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(presets, f, ensure_ascii=False, indent=2)
+
+class ModelPreset(BaseModel):
+    name: str = Field(..., description="Model name/identifier")
+    provider: str = Field(..., description="Provider ID")
+    base_url: Optional[str] = Field(None, description="API Base URL (optional)")
+    api_key: Optional[str] = Field(None, description="API Key (optional)")
+
+@app.get("/models/presets")
+async def get_model_presets():
+    """获取管理员维护的模型预设列表。"""
+    return {"presets": _load_presets()}
+
+@app.post("/models/presets")
+async def add_model_preset(preset: ModelPreset):
+    """添加一个模型预设。"""
+    presets = _load_presets()
+    presets.append(preset.dict())
+    _save_presets(presets)
+    return {"success": True, "presets": presets}
+
+@app.delete("/models/presets/{index}")
+async def delete_model_preset(index: int):
+    """按索引删除一个模型预设。"""
+    presets = _load_presets()
+    if index < 0 or index >= len(presets):
+        raise HTTPException(status_code=404, detail="Preset index out of range")
+    presets.pop(index)
+    _save_presets(presets)
+    return {"success": True, "presets": presets}
+
 @app.post("/models/add_model")
 async def add_custom_model(request: CustomModelAdd):
     """在运行时向指定提供商的模型列表中添加自定义模型。"""
@@ -349,8 +397,9 @@ async def upload_repo_zip(file: UploadFile = File(...)):
 
     tmp_dir = None
     try:
-        # 创建持久化临时目录（不自动清理）
-        upload_base = os.path.join(tempfile.gettempdir(), "deepwiki_uploads")
+        # 创建持久化上传目录（存储在 volume 挂载目录中，重建容器后不丢失）
+        from adalflow.utils import get_adalflow_default_root_path
+        upload_base = os.path.join(get_adalflow_default_root_path(), "uploads")
         os.makedirs(upload_base, exist_ok=True)
 
         # 根据上传文件名生成唯一目录名
