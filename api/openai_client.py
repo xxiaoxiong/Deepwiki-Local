@@ -1,4 +1,4 @@
-"""OpenAI ModelClient integration."""
+"""OpenAI ModelClient 集成模块。"""
 
 import os
 import base64
@@ -54,10 +54,9 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-# completion parsing functions and you can combine them into one singple chat completion parser
+# 补全解析函数，可根据需要组合成单一解析器
 def get_first_message_content(completion: ChatCompletion) -> str:
-    r"""When we only need the content of the first message.
-    It is the default parser for chat completion."""
+    r"""仅需要第一条消息内容时使用，是聊天补全的默认解析器。"""
     log.debug(f"raw completion: {completion}")
     return completion.choices[0].message.content
 
@@ -69,41 +68,39 @@ def get_first_message_content(completion: ChatCompletion) -> str:
 # A simple heuristic to estimate token count for estimating number of tokens in a Streaming response
 def estimate_token_count(text: str) -> int:
     """
-    Estimate the token count of a given text.
+    估算给定文本的 token 数量（用于流式响应的 token 计数估算）。
 
     Args:
-        text (str): The text to estimate token count for.
+        text (str): 待估算的文本。
 
     Returns:
-        int: Estimated token count.
+        int: 估算的 token 数量。
     """
-    # Split the text into tokens using spaces as a simple heuristic
+    # 以空格分词作为简单估算依据
     tokens = text.split()
-
-    # Return the number of tokens
     return len(tokens)
 
 
 def parse_stream_response(completion: ChatCompletionChunk) -> str:
-    r"""Parse the response of the stream API."""
+    r"""解析流式 API 的响应块，提取文本内容。"""
     return completion.choices[0].delta.content
 
 
 def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
-    r"""Handle the streaming response."""
+    r"""处理流式响应，逐块 yield 解析后的文本内容。"""
     for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
+        log.debug(f"原始响应块: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
 
 def get_all_messages_content(completion: ChatCompletion) -> List[str]:
-    r"""When the n > 1, get all the messages content."""
+    r"""当 n > 1 时，获取所有候选消息的文本内容。"""
     return [c.message.content for c in completion.choices]
 
 
 def get_probabilities(completion: ChatCompletion) -> List[List[TokenLogProb]]:
-    r"""Get the probabilities of each token in the completion."""
+    r"""获取补全中每个 token 的对数概率。"""
     log_probs = []
     for c in completion.choices:
         content = c.logprobs.content
@@ -188,18 +185,20 @@ class OpenAIClient(ModelClient):
         self._api_kwargs = {}  # add api kwargs when the OpenAI Client is called
 
     def init_sync_client(self):
+        """初始化同步 OpenAI 客户端。"""
         api_key = self._api_key or os.getenv(self._env_api_key_name)
         if not api_key:
             raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+                f"必须设置环境变量 {self._env_api_key_name}"
             )
         return OpenAI(api_key=api_key, base_url=self.base_url)
 
     def init_async_client(self):
+        """初始化异步 OpenAI 客户端。"""
         api_key = self._api_key or os.getenv(self._env_api_key_name)
         if not api_key:
             raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+                f"必须设置环境变量 {self._env_api_key_name}"
             )
         return AsyncOpenAI(api_key=api_key, base_url=self.base_url)
 
@@ -219,7 +218,7 @@ class OpenAIClient(ModelClient):
         self,
         completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
     ) -> "GeneratorOutput":
-        """Parse the completion, and put it into the raw_response."""
+        """解析补全响应并将其存入 raw_response 字段。"""
         log.debug(f"completion: {completion}, parser: {self.chat_completion_parser}")
         try:
             data = self.chat_completion_parser(completion)
@@ -257,10 +256,7 @@ class OpenAIClient(ModelClient):
     def parse_embedding_response(
         self, response: CreateEmbeddingResponse
     ) -> EmbedderOutput:
-        r"""Parse the embedding response to a structure Adalflow components can understand.
-
-        Should be called in ``Embedder``.
-        """
+        r"""将嵌入响应解析为 AdalFlow 组件可理解的格式，应在 ``Embedder`` 中调用。"""
         try:
             return parse_embedding_response(response)
         except Exception as e:
@@ -410,7 +406,7 @@ class OpenAIClient(ModelClient):
     )
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         """
-        kwargs is the combined input and model_kwargs.  Support streaming call.
+        同步调用 OpenAI API，支持流式响应、嵌入和图像生成。
         """
         log.info(f"api_kwargs: {api_kwargs}")
         self._api_kwargs = api_kwargs
@@ -489,7 +485,7 @@ class OpenAIClient(ModelClient):
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ):
         """
-        kwargs is the combined input and model_kwargs
+        异步调用 OpenAI API，支持嵌入、LLM 和图像生成。
         """
         # store the api kwargs in the client
         self._api_kwargs = api_kwargs
@@ -526,7 +522,7 @@ class OpenAIClient(ModelClient):
         return obj
 
     def to_dict(self) -> Dict[str, Any]:
-        r"""Convert the component to a dictionary."""
+        r"""将组件序列化为字典。"""
         # TODO: not exclude but save yes or no for recreating the clients
         exclude = [
             "sync_client",
@@ -536,16 +532,16 @@ class OpenAIClient(ModelClient):
         return output
 
     def _encode_image(self, image_path: str) -> str:
-        """Encode image to base64 string.
+        """将图片文件编码为 Base64 字符串。
 
         Args:
-            image_path: Path to image file.
+            image_path: 图片文件路径。
 
         Returns:
-            Base64 encoded image string.
+            Base64 编码的图片字符串。
 
         Raises:
-            ValueError: If the file cannot be read or doesn't exist.
+            ValueError: 文件不存在或无法读取时抛出。
         """
         try:
             with open(image_path, "rb") as image_file:
@@ -560,14 +556,14 @@ class OpenAIClient(ModelClient):
     def _prepare_image_content(
         self, image_source: Union[str, Dict[str, Any]], detail: str = "auto"
     ) -> Dict[str, Any]:
-        """Prepare image content for API request.
+        """为 API 请求准备图片内容格式。
 
         Args:
-            image_source: Either a path to local image or a URL.
-            detail: Image detail level ('auto', 'low', or 'high').
+            image_source: 本地图片路径或图片 URL。
+            detail: 图片细节级别（'auto'、'low' 或 'high'）。
 
         Returns:
-            Formatted image content for API request.
+            格式化后的图片内容字典，供 API 请求使用。
         """
         if isinstance(image_source, str):
             if image_source.startswith(("http://", "https://")):

@@ -1,4 +1,4 @@
-"""AWS Bedrock ModelClient integration."""
+"""AWS Bedrock ModelClient 集成模块。"""
 
 import os
 import json
@@ -11,17 +11,18 @@ from typing import Dict, Any, Optional, List, Generator, Union, AsyncGenerator, 
 from adalflow.core.model_client import ModelClient
 from adalflow.core.types import ModelType, GeneratorOutput, EmbedderOutput
 
-# Configure logging
+# 配置日志
 from api.logging_config import setup_logging
 
 setup_logging()
 log = logging.getLogger(__name__)
 
-class BedrockClient(ModelClient):
-    __doc__ = r"""A component wrapper for the AWS Bedrock API client.
 
-    AWS Bedrock provides a unified API that gives access to various foundation models
-    including Amazon's own models and third-party models like Anthropic Claude.
+class BedrockClient(ModelClient):
+    __doc__ = r"""AWS Bedrock API 客户端的组件封装。
+
+    AWS Bedrock 提供统一的 API，可访问多种基础模型，
+    包括 Amazon 自研模型和第三方模型（如 Anthropic Claude）。
 
     Example:
         ```python
@@ -45,14 +46,14 @@ class BedrockClient(ModelClient):
         *args,
         **kwargs
     ) -> None:
-        """Initialize the AWS Bedrock client.
-        
+        """初始化 AWS Bedrock 客户端。
+
         Args:
-            aws_access_key_id: AWS access key ID. If not provided, will use environment variable AWS_ACCESS_KEY_ID.
-            aws_secret_access_key: AWS secret access key. If not provided, will use environment variable AWS_SECRET_ACCESS_KEY.
-            aws_session_token: AWS session token. If not provided, will use environment variable AWS_SESSION_TOKEN.
-            aws_region: AWS region. If not provided, will use environment variable AWS_REGION.
-            aws_role_arn: AWS IAM role ARN for role-based authentication. If not provided, will use environment variable AWS_ROLE_ARN.
+            aws_access_key_id: AWS 访问密钥 ID，未提供时读取环境变量 AWS_ACCESS_KEY_ID。
+            aws_secret_access_key: AWS 秘密访问密钥，未提供时读取环境变量 AWS_SECRET_ACCESS_KEY。
+            aws_session_token: AWS 会话令牌，未提供时读取环境变量 AWS_SESSION_TOKEN。
+            aws_region: AWS 区域，未提供时读取环境变量 AWS_REGION。
+            aws_role_arn: AWS IAM 角色 ARN（角色扮演认证），未提供时读取环境变量 AWS_ROLE_ARN。
         """
         super().__init__(*args, **kwargs)
         from api.config import (
@@ -63,22 +64,23 @@ class BedrockClient(ModelClient):
             AWS_ROLE_ARN,
         )
 
+        # 优先使用传入参数，其次读取配置/环境变量
         self.aws_access_key_id = aws_access_key_id or AWS_ACCESS_KEY_ID
         self.aws_secret_access_key = aws_secret_access_key or AWS_SECRET_ACCESS_KEY
         self.aws_session_token = aws_session_token or AWS_SESSION_TOKEN
-        self.aws_region = aws_region or AWS_REGION or "us-east-1"
+        self.aws_region = aws_region or AWS_REGION or "us-east-1"  # 默认区域
         self.aws_role_arn = aws_role_arn or AWS_ROLE_ARN
-        
-        self.sync_client = self.init_sync_client()
-        self.async_client = None  # Initialize async client only when needed
+
+        self.sync_client = self.init_sync_client()  # 初始化同步客户端
+        self.async_client = None  # 异步客户端按需初始化
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
-        """Create an instance from a dictionary."""
+        """从字典创建实例。"""
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
+        """将实例序列化为字典。"""
         return {
             "aws_access_key_id": self.aws_access_key_id,
             "aws_secret_access_key": self.aws_secret_access_key,
@@ -88,12 +90,11 @@ class BedrockClient(ModelClient):
         }
 
     def __getstate__(self):
-        """
-        Customize serialization to exclude non-picklable client objects.
-        This method is called by pickle when saving the object's state.
+        """自定义序列化逻辑，排除不可 pickle 的客户端对象。
+        由 pickle 保存对象状态时调用。
         """
         state = self.__dict__.copy()
-        # Remove the unpicklable client instances
+        # 移除不可序列化的客户端实例
         if 'sync_client' in state:
             del state['sync_client']
         if 'async_client' in state:
@@ -101,27 +102,26 @@ class BedrockClient(ModelClient):
         return state
 
     def __setstate__(self, state):
-        """
-        Customize deserialization to re-create the client objects.
-        This method is called by pickle when loading the object's state.
+        """自定义反序列化逻辑，重新创建客户端对象。
+        由 pickle 恢复对象状态时调用。
         """
         self.__dict__.update(state)
-        # Re-initialize the clients after unpickling
+        # 反序列化后重新初始化客户端
         self.sync_client = self.init_sync_client()
-        self.async_client = None  # It will be lazily initialized when acall is used
+        self.async_client = None  # 异步客户端按需懒加载
 
     def init_sync_client(self):
-        """Initialize the synchronous AWS Bedrock client."""
+        """初始化同步 AWS Bedrock 客户端。"""
         try:
-            # Create a session with the provided credentials
+            # 使用提供的凭证创建 boto3 会话
             session = boto3.Session(
                 aws_access_key_id=self.aws_access_key_id,
                 aws_secret_access_key=self.aws_secret_access_key,
                 aws_session_token=self.aws_session_token,
                 region_name=self.aws_region
             )
-            
-            # If a role ARN is provided, assume that role
+
+            # 若提供了角色 ARN，则扮演该角色
             if self.aws_role_arn:
                 sts_client = session.client('sts')
                 assumed_role = sts_client.assume_role(
@@ -129,72 +129,67 @@ class BedrockClient(ModelClient):
                     RoleSessionName="DeepWikiBedrockSession"
                 )
                 credentials = assumed_role['Credentials']
-                
-                # Create a new session with the assumed role credentials
+                # 使用扮演角色的临时凭证创建新会话
                 session = boto3.Session(
                     aws_access_key_id=credentials['AccessKeyId'],
                     aws_secret_access_key=credentials['SecretAccessKey'],
                     aws_session_token=credentials['SessionToken'],
                     region_name=self.aws_region
                 )
-            
-            # Create the Bedrock client
+
+            # 创建 Bedrock Runtime 客户端
             bedrock_runtime = session.client(
                 service_name='bedrock-runtime',
                 region_name=self.aws_region
             )
-            
             return bedrock_runtime
-            
+
         except Exception as e:
-            log.error(f"Error initializing AWS Bedrock client: {str(e)}")
-            # Return None to indicate initialization failure
-            return None
+            log.error(f"初始化 AWS Bedrock 客户端时出错: {str(e)}")
+            return None  # 返回 None 表示初始化失败
 
     def init_async_client(self):
-        """Initialize the asynchronous AWS Bedrock client.
-        
-        Note: boto3 doesn't have native async support, so we'll use the sync client
-        in async methods and handle async behavior at a higher level.
+        """初始化异步 AWS Bedrock 客户端。
+
+        注意：boto3 不原生支持异步，此处复用同步客户端，
+        异步行为在上层处理。
         """
-        # For now, just return the sync client
         return self.sync_client
 
     def _get_model_provider(self, model_id: str) -> str:
-        """Extract the provider from the model ID.
-        
+        """从模型 ID 中提取提供商名称。
+
         Args:
-            model_id: The model inference ID, e.g., "anthropic.claude-3-sonnet-20240229-v1:0", "global.anthropic.claude-sonnet-4-5-20250929-v1:0", or "global.cohere.embed-v4:0"
-            
+            model_id: 模型推理 ID，例如：
+                - "anthropic.claude-3-sonnet-20240229-v1:0"
+                - "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+                - "global.cohere.embed-v4:0"
+
         Returns:
-            The provider name, e.g., "anthropic"
+            提供商名称，例如 "anthropic"
         """
         seg = model_id.split(".")
         if len(seg) >= 3:
-            # regional format
-            return seg[1]
+            return seg[1]  # 跨区域格式：global.provider.model
         elif len(seg) == 2:
-            # non-regional format
-            return seg[0]
+            return seg[0]  # 标准格式：provider.model
         else:
-            # Default to Amazon if format is unexpected
-            return "amazon"
+            return "amazon"  # 无法解析时默认为 Amazon
 
     def _format_prompt_for_provider(self, provider: str, prompt: str, messages=None) -> Dict[str, Any]:
-        """Format the prompt according to the provider's requirements.
-        
+        """根据提供商要求格式化请求体。
+
         Args:
-            provider: The provider name, e.g., "anthropic"
-            prompt: The prompt text
-            messages: Optional list of messages for chat models
-            
+            provider: 提供商名称，例如 "anthropic"
+            prompt: 输入文本
+            messages: 可选的对话消息列表（用于聊天模型）
+
         Returns:
-            A dictionary with the formatted prompt
+            格式化后的请求体字典
         """
         if provider == "anthropic":
-            # Format for Claude models
+            # Claude 模型格式
             if messages:
-                # Format as a conversation
                 formatted_messages = []
                 for msg in messages:
                     role = "user" if msg.get("role") == "user" else "assistant"
@@ -208,7 +203,6 @@ class BedrockClient(ModelClient):
                     "max_tokens": 4096
                 }
             else:
-                # Format as a single prompt
                 return {
                     "anthropic_version": "bedrock-2023-05-31",
                     "messages": [
@@ -217,7 +211,7 @@ class BedrockClient(ModelClient):
                     "max_tokens": 4096
                 }
         elif provider == "amazon":
-            # Format for Amazon Titan models
+            # Amazon Titan 模型格式
             return {
                 "inputText": prompt,
                 "textGenerationConfig": {
@@ -228,7 +222,7 @@ class BedrockClient(ModelClient):
                 }
             }
         elif provider == "cohere":
-            # Format for Cohere models
+            # Cohere 模型格式
             return {
                 "prompt": prompt,
                 "max_tokens": 4096,
@@ -236,7 +230,7 @@ class BedrockClient(ModelClient):
                 "p": 0.8
             }
         elif provider == "ai21":
-            # Format for AI21 models
+            # AI21 模型格式
             return {
                 "prompt": prompt,
                 "maxTokens": 4096,
@@ -244,18 +238,18 @@ class BedrockClient(ModelClient):
                 "topP": 0.8
             }
         else:
-            # Default format
+            # 默认格式（兜底）
             return {"prompt": prompt}
 
     def _extract_response_text(self, provider: str, response: Dict[str, Any]) -> str:
-        """Extract the generated text from the response.
-        
+        """从 Bedrock API 响应中提取生成文本。
+
         Args:
-            provider: The provider name, e.g., "anthropic"
-            response: The response from the Bedrock API
-            
+            provider: 提供商名称，例如 "anthropic"
+            response: Bedrock API 返回的响应字典
+
         Returns:
-            The generated text
+            生成的文本字符串
         """
         if provider == "anthropic":
             return response.get("content", [{}])[0].get("text", "")
@@ -266,7 +260,7 @@ class BedrockClient(ModelClient):
         elif provider == "ai21":
             return response.get("completions", [{}])[0].get("data", {}).get("text", "")
         else:
-            # Try to extract text from the response
+            # 尝试从常见字段提取文本
             if isinstance(response, dict):
                 for key in ["text", "content", "output", "completion"]:
                     if key in response:
@@ -274,26 +268,28 @@ class BedrockClient(ModelClient):
             return str(response)
 
     def parse_embedding_response(self, response: Any) -> EmbedderOutput:
-        """Parse Bedrock embedding response to EmbedderOutput format."""
+        """将 Bedrock 嵌入响应解析为 EmbedderOutput 格式。"""
         from adalflow.core.types import Embedding
 
         try:
             embedding_data: List[Embedding] = []
 
             if isinstance(response, dict) and "embeddings" in response:
+                # 批量嵌入响应
                 embeddings = response.get("embeddings") or []
                 embedding_data = [
                     Embedding(embedding=emb, index=i) for i, emb in enumerate(embeddings)
                 ]
             elif isinstance(response, dict) and "embedding" in response:
+                # 单个嵌入响应
                 emb = response.get("embedding") or []
                 embedding_data = [Embedding(embedding=emb, index=0)]
             else:
-                raise ValueError(f"Unexpected embedding response type: {type(response)}")
+                raise ValueError(f"不支持的嵌入响应类型: {type(response)}")
 
             return EmbedderOutput(data=embedding_data, error=None, raw_response=response)
         except Exception as e:
-            log.error(f"Error parsing Bedrock embedding response: {e}")
+            log.error(f"解析 Bedrock 嵌入响应时出错: {e}")
             return EmbedderOutput(data=[], error=str(e), raw_response=response)
 
     @backoff.on_exception(
@@ -302,37 +298,35 @@ class BedrockClient(ModelClient):
         max_time=5,
     )
     def call(self, api_kwargs: Dict = None, model_type: ModelType = None) -> Any:
-        """Make a synchronous call to the AWS Bedrock API."""
+        """同步调用 AWS Bedrock API。"""
         api_kwargs = api_kwargs or {}
-        
-        # Check if client is initialized
+
+        # 检查客户端是否已正确初始化
         if not self.sync_client:
-            error_msg = "AWS Bedrock client not initialized. Check your AWS credentials and region."
+            error_msg = "AWS Bedrock 客户端未初始化，请检查 AWS 凭证和区域设置。"
             log.error(error_msg)
             return error_msg
-        
+
         if model_type == ModelType.LLM:
             model_id = api_kwargs.get("model", "anthropic.claude-3-sonnet-20240229-v1:0")
             provider = self._get_model_provider(model_id)
-            
-            # Get the prompt from api_kwargs
+
             prompt = api_kwargs.get("input", "")
             messages = api_kwargs.get("messages")
-            
-            # Format the prompt according to the provider
+
+            # 按提供商格式化请求体
             request_body = self._format_prompt_for_provider(provider, prompt, messages)
-            
-            # Add model parameters if provided
+
+            # 注入 temperature 参数（各提供商字段名不同）
             if "temperature" in api_kwargs:
                 if provider == "anthropic":
                     request_body["temperature"] = api_kwargs["temperature"]
                 elif provider == "amazon":
                     request_body["textGenerationConfig"]["temperature"] = api_kwargs["temperature"]
-                elif provider == "cohere":
+                elif provider in ("cohere", "ai21"):
                     request_body["temperature"] = api_kwargs["temperature"]
-                elif provider == "ai21":
-                    request_body["temperature"] = api_kwargs["temperature"]
-            
+
+            # 注入 top_p 参数
             if "top_p" in api_kwargs:
                 if provider == "anthropic":
                     request_body["top_p"] = api_kwargs["top_p"]
@@ -342,132 +336,116 @@ class BedrockClient(ModelClient):
                     request_body["p"] = api_kwargs["top_p"]
                 elif provider == "ai21":
                     request_body["topP"] = api_kwargs["top_p"]
-            
-            # Convert request body to JSON
+
             body = json.dumps(request_body)
-            
+
             try:
-                # Make the API call
                 response = self.sync_client.invoke_model(
                     modelId=model_id,
                     body=body
                 )
-                
-                # Parse the response
                 response_body = json.loads(response["body"].read())
-                
-                # Extract the generated text
-                generated_text = self._extract_response_text(provider, response_body)
-                
-                return generated_text
-                
+                return self._extract_response_text(provider, response_body)
+
             except Exception as e:
-                log.error(f"Error calling AWS Bedrock API: {str(e)}")
-                return f"Error: {str(e)}"
+                log.error(f"调用 AWS Bedrock API 时出错: {str(e)}")
+                return f"错误: {str(e)}"
+
         elif model_type == ModelType.EMBEDDER:
             model_id = api_kwargs.get("model", "amazon.titan-embed-text-v2:0")
             provider = self._get_model_provider(model_id)
-
             texts = api_kwargs.get("input", [])
-
             model_kwargs = api_kwargs.get("model_kwargs") or {}
-
             embeddings: List[List[float]] = []
             raw_responses: List[Dict[str, Any]] = []
 
             if provider == "amazon":
-                # Amazon Titan Embed Text does not support batch; send one at a time.
+                # Amazon Titan Embed 不支持批量，逐条发送
                 for text in texts:
                     request_body: Dict[str, Any] = {"inputText": text}
-
                     dimensions = model_kwargs.get("dimensions")
                     if dimensions is not None:
                         request_body["dimensions"] = int(dimensions)
-
                     normalize = model_kwargs.get("normalize")
                     if normalize is not None:
                         request_body["normalize"] = bool(normalize)
 
-                    # Make the API call
                     response = self.sync_client.invoke_model(
                         modelId=model_id,
                         body=json.dumps(request_body),
                     )
-
-                    # Parse the response
                     response_body = json.loads(response["body"].read())
                     raw_responses.append(response_body)
-
                     emb = response_body.get("embedding")
                     if emb is None:
-                        raise ValueError(f"Embedding not found in response: {response_body}")
+                        raise ValueError(f"响应中未找到嵌入向量: {response_body}")
                     embeddings.append(emb)
 
             elif provider == "cohere":
-                # Cohere supports batch; send all texts at once.
+                # Cohere 支持批量，一次发送所有文本
                 request_body = {
                     "texts": texts,
                     "input_type": model_kwargs.get("input_type") or "search_document",
                 }
-
-                # Make the API call
                 response = self.sync_client.invoke_model(
                     modelId=model_id,
                     body=json.dumps(request_body),
                 )
-
-                # Parse the response
                 response_body = json.loads(response["body"].read())
                 raw_responses.append(response_body)
-
                 batch_embeddings = response_body.get("embeddings")
                 if isinstance(batch_embeddings, list):
                     embeddings = batch_embeddings
                 elif isinstance(batch_embeddings, dict) and "float" in batch_embeddings:
                     embeddings = batch_embeddings["float"]
                 else:
-                    raise ValueError(f"Embeddings not found in response: {response_body}")
+                    raise ValueError(f"响应中未找到嵌入向量: {response_body}")
             else:
-                raise NotImplementedError(f"Embedding provider '{provider}' is not supported by the Bedrock client.")
+                raise NotImplementedError(f"Bedrock 客户端不支持嵌入提供商 '{provider}'")
+
             return {"embeddings": embeddings, "raw_responses": raw_responses}
         else:
-            raise ValueError(f"Model type {model_type} is not supported by AWS Bedrock client")
+            raise ValueError(f"AWS Bedrock 客户端不支持模型类型 {model_type}")
 
     async def acall(self, api_kwargs: Dict = None, model_type: ModelType = None) -> Any:
-        """Make an asynchronous call to the AWS Bedrock API."""
-        # For now, just call the sync method
-        # In a real implementation, you would use an async library or run the sync method in a thread pool
+        """异步调用 AWS Bedrock API。
+
+        注意：当前实现直接调用同步方法。
+        生产环境建议使用线程池（asyncio.to_thread）执行同步调用。
+        """
         return self.call(api_kwargs, model_type)
 
     def convert_inputs_to_api_kwargs(
         self, input: Any = None, model_kwargs: Dict = None, model_type: ModelType = None
     ) -> Dict:
-        """Convert inputs to API kwargs for AWS Bedrock."""
+        """将 AdalFlow 标准输入转换为 AWS Bedrock API 所需格式。"""
         model_kwargs = model_kwargs or {}
         api_kwargs = {}
-        
+
         if model_type == ModelType.LLM:
             api_kwargs["model"] = model_kwargs.get("model", "anthropic.claude-3-sonnet-20240229-v1:0")
             api_kwargs["input"] = input
-            
-            # Add model parameters
             if "temperature" in model_kwargs:
                 api_kwargs["temperature"] = model_kwargs["temperature"]
             if "top_p" in model_kwargs:
                 api_kwargs["top_p"] = model_kwargs["top_p"]
-            
             return api_kwargs
+
         elif model_type == ModelType.EMBEDDER:
+            # 统一输入格式为字符串列表
             if isinstance(input, str):
                 inputs = [input]
             elif isinstance(input, Sequence):
                 inputs = list(input)
             else:
-                raise TypeError("input must be a string or sequence of strings")
+                raise TypeError("输入必须是字符串或字符串序列")
 
             api_kwargs["model"] = model_kwargs.get("model", "amazon.titan-embed-text-v2:0")
             api_kwargs["input"] = inputs
             api_kwargs["model_kwargs"] = model_kwargs
             return api_kwargs
         else:
-            raise ValueError(f"Model type {model_type} is not supported by AWS Bedrock client")
+            raise ValueError(f"AWS Bedrock 客户端不支持模型类型 {model_type}")
+
+
+            

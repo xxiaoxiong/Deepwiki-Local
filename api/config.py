@@ -10,26 +10,34 @@ logger = logging.getLogger(__name__)
 from api.openai_client import OpenAIClient
 from adalflow.components.model_client.ollama_client import OllamaClient
 
-# Get API keys from environment variables
+# 从环境变量获取 OpenAI 相关配置
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.deepseek.com/v1')
 
-# vLLM configuration (for intranet deployment)
+# vLLM 配置（用于内网部署）
 VLLM_API_KEY = os.environ.get('VLLM_API_KEY', 'not-needed')
 VLLM_BASE_URL = os.environ.get('VLLM_BASE_URL', 'http://localhost:8000/v1')
 
-# Runtime overrides for provider URLs (set via UI, not persisted across restarts)
+# 运行时提供商 URL 覆盖（通过 UI 设置，重启后不保留）
 runtime_overrides: Dict[str, Any] = {
-    "provider_urls": {},  # e.g. {"vllm": "http://10.0.0.1:8000/v1", "deepseek": "https://..."}
+    "provider_urls": {},  # 示例: {"vllm": "http://10.0.0.1:8000/v1", "deepseek": "https://..."}
 }
 
+
 def get_provider_base_url(provider: str) -> str:
-    """Get the effective base URL for a provider, checking runtime overrides first."""
-    # Check runtime overrides first
+    """获取指定提供商的有效 base URL，优先使用运行时覆盖值。
+
+    Args:
+        provider: 提供商标识符，如 'vllm'、'deepseek'、'ollama'
+
+    Returns:
+        str: 该提供商的 base URL
+    """
+    # 优先检查运行时覆盖
     override_url = runtime_overrides["provider_urls"].get(provider)
     if override_url:
         return override_url
-    # Fall back to env/default
+    # 回退到环境变量/默认值
     if provider == "vllm":
         return VLLM_BASE_URL
     elif provider == "deepseek":
@@ -39,44 +47,61 @@ def get_provider_base_url(provider: str) -> str:
     else:
         return OPENAI_BASE_URL or 'https://api.openai.com/v1'
 
-def set_provider_base_url(provider: str, url: str):
-    """Set a runtime override for a provider's base URL."""
-    runtime_overrides["provider_urls"][provider] = url
-    logger.info(f"Runtime override set for provider '{provider}' base URL: {url}")
 
-# Set keys in environment (in case they're needed elsewhere in the code)
+def set_provider_base_url(provider: str, url: str):
+    """在运行时覆盖指定提供商的 base URL（重启后失效）。
+
+    Args:
+        provider: 提供商标识符
+        url: 新的 base URL
+    """
+    runtime_overrides["provider_urls"][provider] = url
+    logger.info(f"已为提供商 '{provider}' 设置运行时 base URL 覆盖: {url}")
+
+
+# 将 API 密钥写入环境变量（供项目其他模块使用）
 if OPENAI_API_KEY:
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 if OPENAI_BASE_URL:
     os.environ["OPENAI_BASE_URL"] = OPENAI_BASE_URL
 
-# Legacy compatibility aliases
+# 旧版兼容别名（保持向后兼容）
 OPENROUTER_API_KEY = None
 AWS_ACCESS_KEY_ID = None
 AWS_SECRET_ACCESS_KEY = None
+AWS_SESSION_TOKEN = None
+AWS_REGION = None
+AWS_ROLE_ARN = None
 
-# Wiki authentication settings
+# Wiki 认证配置
 raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
-WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
-WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
+WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']  # 是否开启认证模式
+WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')      # 认证码
 
-# Embedder settings
+# 嵌入器类型配置
 EMBEDDER_TYPE = os.environ.get('DEEPWIKI_EMBEDDER_TYPE', 'openai').lower()
 
-# Get configuration directory from environment variable, or use default if not set
+# 配置文件目录（可通过环境变量自定义）
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
-# Client class mapping
+# 客户端类名到类对象的映射
 CLIENT_CLASSES = {
     "OpenAIClient": OpenAIClient,
     "OllamaClient": OllamaClient,
 }
 
+
 def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
-    """
-    Recursively replace placeholders like "${ENV_VAR}" in string values
-    within a nested configuration structure (dicts, lists, strings)
-    with environment variable values. Logs a warning if a placeholder is not found.
+    """递归替换配置中的环境变量占位符（如 "${ENV_VAR}"）。
+
+    遍历嵌套的字典、列表和字符串，将 ${VAR_NAME} 格式的占位符
+    替换为对应的环境变量值。若环境变量不存在，保留原占位符并输出警告。
+
+    Args:
+        config: 待处理的配置对象（字典、列表、字符串或其他类型）
+
+    Returns:
+        替换占位符后的配置对象
     """
     pattern = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
@@ -86,8 +111,7 @@ def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any])
         env_var_value = os.environ.get(env_var_name)
         if env_var_value is None:
             logger.warning(
-                f"Environment variable placeholder '{original_placeholder}' was not found in the environment. "
-                f"The placeholder string will be used as is."
+                f"环境变量占位符 '{original_placeholder}' 未在环境中找到，将保留原占位符。"
             )
             return original_placeholder
         return env_var_value
@@ -99,44 +123,56 @@ def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any])
     elif isinstance(config, str):
         return pattern.sub(replacer, config)
     else:
-        # Handles numbers, booleans, None, etc.
+        # 数字、布尔值、None 等类型直接返回
         return config
 
-# Load JSON configuration file
+
 def load_json_config(filename):
+    """加载 JSON 格式的配置文件，并自动替换环境变量占位符。
+
+    Args:
+        filename: 配置文件名（相对于配置目录）
+
+    Returns:
+        dict: 解析并处理后的配置字典，失败时返回空字典
+    """
     try:
-        # If environment variable is set, use the directory specified by it
+        # 优先使用环境变量指定的配置目录
         if CONFIG_DIR:
             config_path = Path(CONFIG_DIR) / filename
         else:
-            # Otherwise use default directory
             config_path = Path(__file__).parent / "config" / filename
 
-        logger.info(f"Loading configuration from {config_path}")
+        logger.info(f"正在从 {config_path} 加载配置")
 
         if not config_path.exists():
-            logger.warning(f"Configuration file {config_path} does not exist")
+            logger.warning(f"配置文件 {config_path} 不存在")
             return {}
 
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-            config = replace_env_placeholders(config)
+            config = replace_env_placeholders(config)  # 替换环境变量占位符
             return config
     except Exception as e:
-        logger.error(f"Error loading configuration file {filename}: {str(e)}")
+        logger.error(f"加载配置文件 {filename} 时出错: {str(e)}")
         return {}
 
-# Load generator model configuration
+
 def load_generator_config():
+    """加载生成器（LLM）模型配置，并为每个提供商绑定对应的客户端类。
+
+    Returns:
+        dict: 包含提供商和模型配置的字典
+    """
     generator_config = load_json_config("generator.json")
 
-    # Add client classes to each provider
+    # 为每个提供商绑定客户端类
     if "providers" in generator_config:
         for provider_id, provider_config in generator_config["providers"].items():
-            # Try to set client class from client_class
+            # 优先通过 client_class 字段查找客户端类
             if provider_config.get("client_class") in CLIENT_CLASSES:
                 provider_config["model_client"] = CLIENT_CLASSES[provider_config["client_class"]]
-            # Fall back to default mapping based on provider_id
+            # 回退到基于 provider_id 的默认映射
             elif provider_id in ["deepseek", "vllm", "ollama"]:
                 default_map = {
                     "deepseek": OpenAIClient,
@@ -145,15 +181,20 @@ def load_generator_config():
                 }
                 provider_config["model_client"] = default_map[provider_id]
             else:
-                logger.warning(f"Unknown provider or client class: {provider_id}")
+                logger.warning(f"未知提供商或客户端类: {provider_id}")
 
     return generator_config
 
-# Load embedder configuration
+
 def load_embedder_config():
+    """加载嵌入器配置，并为每个嵌入器绑定对应的客户端类。
+
+    Returns:
+        dict: 包含嵌入器配置的字典
+    """
     embedder_config = load_json_config("embedder.json")
 
-    # Process client classes
+    # 处理各嵌入器的客户端类绑定
     for key in ["embedder", "embedder_ollama"]:
         if key in embedder_config and "client_class" in embedder_config[key]:
             class_name = embedder_config[key]["client_class"]
@@ -162,12 +203,12 @@ def load_embedder_config():
 
     return embedder_config
 
+
 def get_embedder_config():
-    """
-    Get the current embedder configuration based on DEEPWIKI_EMBEDDER_TYPE.
+    """根据 DEEPWIKI_EMBEDDER_TYPE 获取当前嵌入器配置。
 
     Returns:
-        dict: The embedder configuration with model_client resolved
+        dict: 包含已解析 model_client 的嵌入器配置字典
     """
     embedder_type = EMBEDDER_TYPE
     if embedder_type == 'ollama' and 'embedder_ollama' in configs:
@@ -175,44 +216,54 @@ def get_embedder_config():
     else:
         return configs.get("embedder", {})
 
+
 def is_ollama_embedder():
-    """
-    Check if the current embedder configuration uses OllamaClient.
+    """检查当前嵌入器是否使用 OllamaClient。
 
     Returns:
-        bool: True if using OllamaClient, False otherwise
+        bool: 使用 OllamaClient 时返回 True，否则返回 False
     """
     embedder_config = get_embedder_config()
     if not embedder_config:
         return False
 
-    # Check if model_client is OllamaClient
+    # 检查 model_client 是否为 OllamaClient 类
     model_client = embedder_config.get("model_client")
     if model_client:
         return model_client.__name__ == "OllamaClient"
 
-    # Fallback: check client_class string
+    # 回退：检查 client_class 字符串
     client_class = embedder_config.get("client_class", "")
     return client_class == "OllamaClient"
 
+
 def get_embedder_type():
-    """
-    Get the current embedder type based on configuration.
-    
+    """获取当前嵌入器类型。
+
     Returns:
-        str: 'ollama' or 'openai' (default)
+        str: 'ollama' 或 'openai'（默认）
     """
     if is_ollama_embedder():
         return 'ollama'
     else:
         return 'openai'
 
-# Load repository and file filters configuration
+
 def load_repo_config():
+    """加载仓库和文件过滤器配置。
+
+    Returns:
+        dict: 仓库配置字典
+    """
     return load_json_config("repo.json")
 
-# Load language configuration
+
 def load_lang_config():
+    """加载语言配置，若配置文件缺失或格式错误则使用默认配置。
+
+    Returns:
+        dict: 包含 supported_languages 和 default 字段的语言配置字典
+    """
     default_config = {
         "supported_languages": {
             "en": "English",
@@ -229,36 +280,38 @@ def load_lang_config():
         "default": "en"
     }
 
-    loaded_config = load_json_config("lang.json") # Let load_json_config handle path and loading
+    loaded_config = load_json_config("lang.json")
 
     if not loaded_config:
         return default_config
 
     if "supported_languages" not in loaded_config or "default" not in loaded_config:
-        logger.warning("Language configuration file 'lang.json' is malformed. Using default language configuration.")
+        logger.warning("语言配置文件 'lang.json' 格式错误，将使用默认语言配置。")
         return default_config
 
     return loaded_config
 
-# Default excluded directories and files
+
+# 默认排除的目录列表
 DEFAULT_EXCLUDED_DIRS: List[str] = [
-    # Virtual environments and package managers
+    # 虚拟环境和包管理器
     "./.venv/", "./venv/", "./env/", "./virtualenv/",
     "./node_modules/", "./bower_components/", "./jspm_packages/",
-    # Version control
+    # 版本控制
     "./.git/", "./.svn/", "./.hg/", "./.bzr/",
-    # Cache and compiled files
+    # 缓存和编译文件
     "./__pycache__/", "./.pytest_cache/", "./.mypy_cache/", "./.ruff_cache/", "./.coverage/",
-    # Build and distribution
+    # 构建和发布目录
     "./dist/", "./build/", "./out/", "./target/", "./bin/", "./obj/",
-    # Documentation
+    # 文档目录
     "./docs/", "./_docs/", "./site-docs/", "./_site/",
-    # IDE specific
+    # IDE 特定目录
     "./.idea/", "./.vscode/", "./.vs/", "./.eclipse/", "./.settings/",
-    # Logs and temporary files
+    # 日志和临时文件
     "./logs/", "./log/", "./tmp/", "./temp/",
 ]
 
+# 默认排除的文件列表
 DEFAULT_EXCLUDED_FILES: List[str] = [
     "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json", "poetry.lock",
     "Pipfile.lock", "requirements.txt.lock", "Cargo.lock", "composer.lock",
@@ -281,88 +334,91 @@ DEFAULT_EXCLUDED_FILES: List[str] = [
     "packages/*/dist", "packages/*/build", ".output"
 ]
 
-# Initialize empty configuration
+# 初始化空配置字典
 configs = {}
 
-# Load all configuration files
+# 加载所有配置文件
 generator_config = load_generator_config()
 embedder_config = load_embedder_config()
 repo_config = load_repo_config()
 lang_config = load_lang_config()
 
-# Update configuration
+# 更新生成器配置
 if generator_config:
     configs["default_provider"] = generator_config.get("default_provider", "deepseek")
     configs["providers"] = generator_config.get("providers", {})
 
-# Update embedder configuration
+# 更新嵌入器配置
 if embedder_config:
     for key in ["embedder", "embedder_ollama", "retriever", "text_splitter"]:
         if key in embedder_config:
             configs[key] = embedder_config[key]
 
-# Update repository configuration
+# 更新仓库配置
 if repo_config:
     for key in ["file_filters", "repository"]:
         if key in repo_config:
             configs[key] = repo_config[key]
 
-# Update language configuration
+# 更新语言配置
 if lang_config:
     configs["lang_config"] = lang_config
 
 
 def get_model_config(provider="deepseek", model=None):
-    """
-    Get configuration for the specified provider and model
+    """获取指定提供商和模型的配置。
 
-    Parameters:
-        provider (str): Model provider ('deepseek', 'vllm', 'ollama')
-        model (str): Model name, or None to use default model
+    Args:
+        provider (str): 模型提供商（'deepseek'、'vllm'、'ollama' 等）
+        model (str): 模型名称，为 None 时使用提供商的默认模型
 
     Returns:
-        dict: Configuration containing model_client, model and other parameters
+        dict: 包含 model_client 和 model_kwargs 的配置字典
+
+    Raises:
+        ValueError: 提供商或模型配置不存在时抛出
     """
-    # Get provider configuration
+    # 检查提供商配置是否已加载
     if "providers" not in configs:
-        raise ValueError("Provider configuration not loaded")
+        raise ValueError("提供商配置未加载")
 
     provider_config = configs["providers"].get(provider)
     if not provider_config:
-        raise ValueError(f"Configuration for provider '{provider}' not found")
+        raise ValueError(f"未找到提供商 '{provider}' 的配置")
 
     model_client = provider_config.get("model_client")
     if not model_client:
-        raise ValueError(f"Model client not specified for provider '{provider}'")
+        raise ValueError(f"提供商 '{provider}' 未指定模型客户端")
 
-    # If model not provided, use default model for the provider
+    # 未指定模型时使用提供商默认模型
     if not model:
         model = provider_config.get("default_model")
         if not model:
-            raise ValueError(f"No default model specified for provider '{provider}'")
+            raise ValueError(f"提供商 '{provider}' 未指定默认模型")
 
-    # Get model parameters (if present)
+    # 获取模型参数（若存在）
     model_params = {}
     if model in provider_config.get("models", {}):
         model_params = provider_config["models"][model]
     else:
+        # 模型不在列表中时回退到默认模型的参数
         default_model = provider_config.get("default_model")
         model_params = provider_config["models"][default_model]
 
-    # Prepare base configuration
     result = {
         "model_client": model_client,
     }
 
-    # Provider-specific adjustments
+    # 根据提供商类型构造 model_kwargs
     if provider == "ollama":
-        # Ollama uses a slightly different parameter structure
+        # Ollama 使用 options 嵌套参数结构
         if "options" in model_params:
             result["model_kwargs"] = {"model": model, **model_params["options"]}
         else:
             result["model_kwargs"] = {"model": model}
     else:
-        # Standard structure for other providers
+        # 其他提供商使用扁平参数结构
         result["model_kwargs"] = {"model": model, **model_params}
 
     return result
+ 

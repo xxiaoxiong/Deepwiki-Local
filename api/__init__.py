@@ -1,3 +1,3 @@
-# Make the api package importable
+# 使 api 包可被导入
 
-# api package
+# api 包初始化文件

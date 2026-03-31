@@ -8,98 +8,116 @@ from adalflow.core.component import DataComponent
 import requests
 import os
 
-# Configure logging
+# 配置日志
 from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 class OllamaModelNotFoundError(Exception):
-    """Custom exception for when Ollama model is not found"""
+    """当 Ollama 模型未找到时抛出的自定义异常。"""
     pass
+
 
 def check_ollama_model_exists(model_name: str, ollama_host: str = None) -> bool:
     """
-    Check if an Ollama model exists before attempting to use it.
-    
+    在尝试使用 Ollama 模型之前，检查该模型是否存在。
+
     Args:
-        model_name: Name of the model to check
-        ollama_host: Ollama host URL, defaults to localhost:11434
-        
+        model_name: 要检查的模型名称
+        ollama_host: Ollama 服务地址，默认使用 localhost:11434
+
     Returns:
-        bool: True if model exists, False otherwise
+        bool: 模型存在返回 True，否则返回 False
     """
     if ollama_host is None:
         ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    
+
     try:
-        # Remove /api prefix if present and add it back
+        # 去除末尾的 /api 前缀（若有），然后重新拼接
         if ollama_host.endswith('/api'):
             ollama_host = ollama_host[:-4]
-        
+
+        # 请求 Ollama 已安装模型列表
         response = requests.get(f"{ollama_host}/api/tags", timeout=5)
         if response.status_code == 200:
             models_data = response.json()
+            # 获取所有可用模型的基础名称（去掉 tag 部分）
             available_models = [model.get('name', '').split(':')[0] for model in models_data.get('models', [])]
-            model_base_name = model_name.split(':')[0]  # Remove tag if present
-            
+            model_base_name = model_name.split(':')[0]  # 去掉模型 tag
+
             is_available = model_base_name in available_models
             if is_available:
-                logger.info(f"Ollama model '{model_name}' is available")
+                logger.info(f"Ollama 模型 '{model_name}' 可用")
             else:
-                logger.warning(f"Ollama model '{model_name}' is not available. Available models: {available_models}")
+                logger.warning(f"Ollama 模型 '{model_name}' 不可用。可用模型: {available_models}")
             return is_available
         else:
-            logger.warning(f"Could not check Ollama models, status code: {response.status_code}")
+            logger.warning(f"无法检查 Ollama 模型，状态码: {response.status_code}")
             return False
     except requests.exceptions.RequestException as e:
-        logger.warning(f"Could not connect to Ollama to check models: {e}")
+        logger.warning(f"无法连接到 Ollama 以检查模型: {e}")
         return False
     except Exception as e:
-        logger.warning(f"Error checking Ollama model availability: {e}")
+        logger.warning(f"检查 Ollama 模型可用性时出错: {e}")
         return False
+
 
 class OllamaDocumentProcessor(DataComponent):
     """
-    Process documents for Ollama embeddings by processing one document at a time.
-    Adalflow Ollama Client does not support batch embedding, so we need to process each document individually.
+    为 Ollama 嵌入模型逐个处理文档的数据组件。
+    由于 Adalflow 的 Ollama 客户端不支持批量嵌入，
+    因此需要对每个文档单独进行处理。
     """
+
     def __init__(self, embedder: adal.Embedder) -> None:
         super().__init__()
-        self.embedder = embedder
+        self.embedder = embedder  # 用于生成文档嵌入向量的嵌入器
 
     def __call__(self, documents: Sequence[Document]) -> Sequence[Document]:
-        output = deepcopy(documents)
-        logger.info(f"Processing {len(output)} documents individually for Ollama embeddings")
+        """
+        对文档列表逐个生成 Ollama 嵌入向量。
 
-        successful_docs = []
-        expected_embedding_size = None
+        Args:
+            documents: 待处理的文档序列
 
-        for i, doc in enumerate(tqdm(output, desc="Processing documents for Ollama embeddings")):
+        Returns:
+            包含有效嵌入向量的文档列表（大小不一致的文档会被跳过）
+        """
+        output = deepcopy(documents)  # 深拷贝，避免修改原始数据
+        logger.info(f"正在逐个处理 {len(output)} 个文档以生成 Ollama 嵌入向量")
+
+        successful_docs = []  # 成功处理的文档列表
+        expected_embedding_size = None  # 期望的嵌入向量维度（由第一个成功文档确定）
+
+        for i, doc in enumerate(tqdm(output, desc="正在为 Ollama 嵌入处理文档")):
             try:
-                # Get embedding for a single document
+                # 为单个文档生成嵌入向量
                 result = self.embedder(input=doc.text)
                 if result.data and len(result.data) > 0:
                     embedding = result.data[0].embedding
 
-                    # Validate embedding size consistency
+                    # 验证嵌入向量维度一致性
                     if expected_embedding_size is None:
+                        # 以第一个成功文档的维度为基准
                         expected_embedding_size = len(embedding)
-                        logger.info(f"Expected embedding size set to: {expected_embedding_size}")
+                        logger.info(f"期望嵌入向量维度设为: {expected_embedding_size}")
                     elif len(embedding) != expected_embedding_size:
+                        # 维度不一致的文档跳过，避免 FAISS 报错
                         file_path = getattr(doc, 'meta_data', {}).get('file_path', f'document_{i}')
-                        logger.warning(f"Document '{file_path}' has inconsistent embedding size {len(embedding)} != {expected_embedding_size}, skipping")
+                        logger.warning(f"文档 '{file_path}' 的嵌入维度不一致 {len(embedding)} != {expected_embedding_size}，已跳过")
                         continue
 
-                    # Assign the embedding to the document
+                    # 将嵌入向量赋值给文档
                     output[i].vector = embedding
                     successful_docs.append(output[i])
                 else:
                     file_path = getattr(doc, 'meta_data', {}).get('file_path', f'document_{i}')
-                    logger.warning(f"Failed to get embedding for document '{file_path}', skipping")
+                    logger.warning(f"无法为文档 '{file_path}' 生成嵌入向量，已跳过")
             except Exception as e:
                 file_path = getattr(doc, 'meta_data', {}).get('file_path', f'document_{i}')
-                logger.error(f"Error processing document '{file_path}': {e}, skipping")
+                logger.error(f"处理文档 '{file_path}' 时出错: {e}，已跳过")
 
-        logger.info(f"Successfully processed {len(successful_docs)}/{len(output)} documents with consistent embeddings")
+        logger.info(f"成功处理 {len(successful_docs)}/{len(output)} 个文档，嵌入维度一致")
         return successful_docs

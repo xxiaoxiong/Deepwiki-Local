@@ -18,67 +18,65 @@ from requests.exceptions import RequestException
 
 from api.tools.embedder import get_embedder
 
-# Configure logging
+# 配置日志记录器
 logger = logging.getLogger(__name__)
 
-# Maximum token limit for OpenAI embedding models
+# 最大嵌入 token 限制（OpenAI 嵌入模型）
 MAX_EMBEDDING_TOKENS = 8192
 
 def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool = None) -> int:
     """
-    Count the number of tokens in a text string using tiktoken.
+    使用 tiktoken 计算文本的 token 数量。
 
     Args:
-        text (str): The text to count tokens for.
-        embedder_type (str, optional): The embedder type ('openai', 'ollama').
-                                     If None, will be determined from configuration.
-        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
-                                           If None, will be determined from configuration.
+        text (str): 待计算的文本。
+        embedder_type (str, optional): 嵌入器类型（'openai' 或 'ollama'）。
+                                     为 None 时自动从配置中读取。
+        is_ollama_embedder (bool, optional): 已废弃，请使用 embedder_type 代替。
 
     Returns:
-        int: The number of tokens in the text.
+        int: 文本的 token 数量。
     """
     try:
-        # Handle backward compatibility
+        # 向后兼容处理：将旧的 is_ollama_embedder 参数转换为新的 embedder_type
         if embedder_type is None and is_ollama_embedder is not None:
             embedder_type = 'ollama' if is_ollama_embedder else None
         
-        # Determine embedder type if not specified
+        # 若未指定嵌入器类型，则从配置中自动读取
         if embedder_type is None:
             from api.config import get_embedder_type
             embedder_type = get_embedder_type()
 
-        # Choose encoding based on embedder type
+        # 根据嵌入器类型选择对应的编码方式
         if embedder_type == 'ollama':
-            # Ollama typically uses cl100k_base encoding
+            # Ollama 通常使用 cl100k_base 编码
             encoding = tiktoken.get_encoding("cl100k_base")
-        else:  # OpenAI or default
-            # Use OpenAI embedding model encoding
+        else:  # OpenAI 或默认
+            # 使用 OpenAI 嵌入模型的编码
             encoding = tiktoken.encoding_for_model("text-embedding-3-small")
 
         return len(encoding.encode(text))
     except Exception as e:
-        # Fallback to a simple approximation if tiktoken fails
-        logger.warning(f"Error counting tokens with tiktoken: {e}")
-        # Rough approximation: 4 characters per token
+        # tiktoken 失败时回退到简单估算（每 4 个字符约 1 个 token）
+        logger.warning(f"使用 tiktoken 计算 token 数量时出错: {e}")
         return len(text) // 4
 
 def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_token: str = None) -> str:
     """
-    Downloads a Git repository (GitHub, GitLab, or Bitbucket) to a specified local path.
+    将 Git 仓库（GitHub、GitLab、Bitbucket 等）克隆到指定本地路径。
 
     Args:
-        repo_type(str): Type of repository
-        repo_url (str): The URL of the Git repository to clone.
-        local_path (str): The local directory where the repository will be cloned.
-        access_token (str, optional): Access token for private repositories.
+        repo_type(str): 仓库类型
+        repo_url (str): Git 仓库的 URL 地址。
+        local_path (str): 本地克隆目标目录。
+        access_token (str, optional): 私有仓库的访问令牌。
 
     Returns:
-        str: The output message from the `git` command.
+        str: git 命令的输出信息。
     """
     try:
-        # Check if Git is installed
-        logger.info(f"Preparing to clone repository to {local_path}")
+        # 检查 Git 是否已安装
+        logger.info(f"准备将仓库克隆到 {local_path}")
         subprocess.run(
             ["git", "--version"],
             check=True,
@@ -86,16 +84,15 @@ def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_
             stderr=subprocess.PIPE,
         )
 
-        # Check if repository already exists
+        # 检查仓库是否已存在（目录非空则视为已存在）
         if os.path.exists(local_path) and os.listdir(local_path):
-            # Directory exists and is not empty
-            logger.warning(f"Repository already exists at {local_path}. Using existing repository.")
+            logger.warning(f"仓库已存在于 {local_path}，使用现有仓库。")
             return f"Using existing repository at {local_path}"
 
-        # Ensure the local path exists
+        # 确保目标目录存在
         os.makedirs(local_path, exist_ok=True)
 
-        # Prepare the clone URL with access token if provided
+        # 若提供了访问令牌，则将其注入克隆 URL
         clone_url = repo_url
         if access_token:
             parsed = urlparse(repo_url)
@@ -123,9 +120,9 @@ def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_
 
             logger.info("Using access token for authentication")
 
-        # Clone the repository
-        logger.info(f"Cloning repository from {repo_url} to {local_path}")
-        # We use repo_url in the log to avoid exposing the token in logs
+        # 执行浅克隆（仅克隆最新提交，节省时间和空间）
+        logger.info(f"正在从 {repo_url} 克隆仓库到 {local_path}")
+        # 日志中使用 repo_url 而非 clone_url，避免令牌泄露
         result = subprocess.run(
             ["git", "clone", "--depth=1", "--single-branch", clone_url, local_path],
             check=True,
@@ -133,119 +130,110 @@ def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_
             stderr=subprocess.PIPE,
         )
 
-        logger.info("Repository cloned successfully")
+        logger.info("仓库克隆成功")
         return result.stdout.decode("utf-8")
 
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.decode('utf-8')
-        # Sanitize error message to remove any tokens (both raw and URL-encoded)
+        # 清洗错误信息，避免原始令牌和 URL 编码令牌泄露
         if access_token:
-            # Remove raw token
             error_msg = error_msg.replace(access_token, "***TOKEN***")
-            # Also remove URL-encoded token to prevent leaking encoded version
             encoded_token = quote(access_token, safe='')
             error_msg = error_msg.replace(encoded_token, "***TOKEN***")
-        raise ValueError(f"Error during cloning: {error_msg}")
+        raise ValueError(f"克隆时出错: {error_msg}")
     except Exception as e:
-        raise ValueError(f"An unexpected error occurred: {str(e)}")
+        raise ValueError(f"发生意外错误: {str(e)}")
 
-# Alias for backward compatibility
+# 向后兼容别名
 download_github_repo = download_repo
 
 def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder: bool = None, 
                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                       included_dirs: List[str] = None, included_files: List[str] = None):
     """
-    Recursively reads all documents in a directory and its subdirectories.
+    递归读取目录及其子目录中的所有文档。
 
     Args:
-        path (str): The root directory path.
-        embedder_type (str, optional): The embedder type ('openai', 'google', 'ollama').
-                                     If None, will be determined from configuration.
-        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
-                                           If None, will be determined from configuration.
-        excluded_dirs (List[str], optional): List of directories to exclude from processing.
-            Overrides the default configuration if provided.
-        excluded_files (List[str], optional): List of file patterns to exclude from processing.
-            Overrides the default configuration if provided.
-        included_dirs (List[str], optional): List of directories to include exclusively.
-            When provided, only files in these directories will be processed.
-        included_files (List[str], optional): List of file patterns to include exclusively.
-            When provided, only files matching these patterns will be processed.
+        path (str): 根目录路径。
+        embedder_type (str, optional): 嵌入器类型（'openai'、'google' 或 'ollama'）。
+                                     为 None 时自动从配置中读取。
+        is_ollama_embedder (bool, optional): 已废弃，请使用 embedder_type 代替。
+        excluded_dirs (List[str], optional): 排除的目录列表，覆盖默认配置。
+        excluded_files (List[str], optional): 排除的文件模式列表，覆盖默认配置。
+        included_dirs (List[str], optional): 仅包含的目录列表（包含模式下使用）。
+        included_files (List[str], optional): 仅包含的文件模式列表（包含模式下使用）。
 
     Returns:
-        list: A list of Document objects with metadata.
+        list: 包含元数据的 Document 对象列表。
     """
     # Handle backward compatibility
     if embedder_type is None and is_ollama_embedder is not None:
         embedder_type = 'ollama' if is_ollama_embedder else None
     documents = []
-    # File extensions to look for, prioritizing code files
+    # 优先处理的代码文件扩展名
     code_extensions = [".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
                        ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs"]
     doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml"]
 
-    # Determine filtering mode: inclusion or exclusion
+    # 判断过滤模式：包含模式 or 排除模式
     use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0)
 
     if use_inclusion_mode:
-        # Inclusion mode: only process specified directories and files
+        # 包含模式：仅处理指定的目录和文件
         final_included_dirs = set(included_dirs) if included_dirs else set()
         final_included_files = set(included_files) if included_files else set()
 
-        logger.info(f"Using inclusion mode")
-        logger.info(f"Included directories: {list(final_included_dirs)}")
-        logger.info(f"Included files: {list(final_included_files)}")
+        logger.info(f"使用包含模式")
+        logger.info(f"包含目录: {list(final_included_dirs)}")
+        logger.info(f"包含文件: {list(final_included_files)}")
 
-        # Convert to lists for processing
         included_dirs = list(final_included_dirs)
         included_files = list(final_included_files)
         excluded_dirs = []
         excluded_files = []
     else:
-        # Exclusion mode: use default exclusions plus any additional ones
+        # 排除模式：使用默认排除列表加上额外指定的排除项
         final_excluded_dirs = set(DEFAULT_EXCLUDED_DIRS)
         final_excluded_files = set(DEFAULT_EXCLUDED_FILES)
 
-        # Add any additional excluded directories from config
+        # 从配置文件中追加额外排除目录
         if "file_filters" in configs and "excluded_dirs" in configs["file_filters"]:
             final_excluded_dirs.update(configs["file_filters"]["excluded_dirs"])
 
-        # Add any additional excluded files from config
+        # 从配置文件中追加额外排除文件
         if "file_filters" in configs and "excluded_files" in configs["file_filters"]:
             final_excluded_files.update(configs["file_filters"]["excluded_files"])
 
-        # Add any explicitly provided excluded directories and files
+        # 追加调用方显式指定的排除项
         if excluded_dirs is not None:
             final_excluded_dirs.update(excluded_dirs)
 
         if excluded_files is not None:
             final_excluded_files.update(excluded_files)
 
-        # Convert back to lists for compatibility
         excluded_dirs = list(final_excluded_dirs)
         excluded_files = list(final_excluded_files)
         included_dirs = []
         included_files = []
 
-        logger.info(f"Using exclusion mode")
-        logger.info(f"Excluded directories: {excluded_dirs}")
-        logger.info(f"Excluded files: {excluded_files}")
+        logger.info(f"使用排除模式")
+        logger.info(f"排除目录: {excluded_dirs}")
+        logger.info(f"排除文件: {excluded_files}")
 
-    logger.info(f"Reading documents from {path}")
+    logger.info(f"正在从 {path} 读取文档")
 
     def should_process_file(file_path: str, use_inclusion: bool, included_dirs: List[str], included_files: List[str],
                            excluded_dirs: List[str], excluded_files: List[str]) -> bool:
         """
-        Determine if a file should be processed based on inclusion/exclusion rules.
+        根据包含/排除规则判断某文件是否应被处理。
 
         Args:
-            file_path (str): The file path to check
-            use_inclusion (bool): Whether to use inclusion mode
-            included_dirs (List[str]): List of directories to include
-            included_files (List[str]): List of files to include
-            excluded_dirs (List[str]): List of directories to exclude
-            excluded_files (List[str]): List of files to exclude
+            file_path (str): 待判断的文件路径。
+            use_inclusion (bool): 是否使用包含模式。
+            included_dirs (List[str]): 包含的目录列表。
+            included_files (List[str]): 包含的文件列表。
+            excluded_dirs (List[str]): 排除的目录列表。
+            excluded_files (List[str]): 排除的文件列表。
 
         Returns:
             bool: True if the file should be processed, False otherwise

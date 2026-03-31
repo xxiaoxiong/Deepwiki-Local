@@ -10,36 +10,36 @@ from pydantic import BaseModel, Field
 # google.generativeai removed - using OpenAI-compatible providers only
 import asyncio
 
-# Configure logging
+# 配置日志记录
 from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Initialize FastAPI app
+# 初始化 FastAPI 应用
 app = FastAPI(
     title="Streaming API",
-    description="API for streaming chat completions"
+    description="流式聊天补全 API"
 )
 
-# Configure CORS
+# 配置跨域资源共享（CORS）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],  # 允许所有来源
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],  # 允许所有 HTTP 方法
+    allow_headers=["*"],  # 允许所有请求头
 )
 
-# Helper function to get adalflow root path
+# 辅助函数：获取 adalflow 默认根路径
 def get_adalflow_default_root_path():
     return os.path.expanduser(os.path.join("~", ".adalflow"))
 
-# --- Pydantic Models ---
+# --- Pydantic 数据模型 ---
 class WikiPage(BaseModel):
     """
-    Model for a wiki page.
+    Wiki 页面数据模型。
     """
     id: str
     title: str
@@ -68,7 +68,7 @@ class RepoInfo(BaseModel):
 
 class WikiSection(BaseModel):
     """
-    Model for the wiki sections.
+    Wiki 章节数据模型。
     """
     id: str
     title: str
@@ -78,7 +78,7 @@ class WikiSection(BaseModel):
 
 class WikiStructureModel(BaseModel):
     """
-    Model for the overall wiki structure.
+    整体 Wiki 结构数据模型。
     """
     id: str
     title: str
@@ -89,7 +89,7 @@ class WikiStructureModel(BaseModel):
 
 class WikiCacheData(BaseModel):
     """
-    Model for the data to be stored in the wiki cache.
+    Wiki 缓存存储数据模型。
     """
     wiki_structure: WikiStructureModel
     generated_pages: Dict[str, WikiPage]
@@ -100,7 +100,7 @@ class WikiCacheData(BaseModel):
 
 class WikiCacheRequest(BaseModel):
     """
-    Model for the request body when saving wiki cache.
+    保存 Wiki 缓存的请求体数据模型。
     """
     repo: RepoInfo
     language: str
@@ -111,23 +111,23 @@ class WikiCacheRequest(BaseModel):
 
 class WikiExportRequest(BaseModel):
     """
-    Model for requesting a wiki export.
+    Wiki 导出请求数据模型。
     """
     repo_url: str = Field(..., description="URL of the repository")
     pages: List[WikiPage] = Field(..., description="List of wiki pages to export")
     format: Literal["markdown", "json"] = Field(..., description="Export format (markdown or json)")
 
-# --- Model Configuration Models ---
+# --- 模型配置数据模型 ---
 class Model(BaseModel):
     """
-    Model for LLM model configuration
+    LLM 模型配置数据模型。
     """
     id: str = Field(..., description="Model identifier")
     name: str = Field(..., description="Display name for the model")
 
 class Provider(BaseModel):
     """
-    Model for LLM provider configuration
+    LLM 提供商配置数据模型。
     """
     id: str = Field(..., description="Provider identifier")
     name: str = Field(..., description="Display name for the provider")
@@ -136,7 +136,7 @@ class Provider(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Model for the entire model configuration
+    完整模型配置数据模型。
     """
     providers: List[Provider] = Field(..., description="List of available model providers")
     defaultProvider: str = Field(..., description="ID of the default provider")
@@ -153,14 +153,14 @@ async def get_lang_config():
 @app.get("/auth/status")
 async def get_auth_status():
     """
-    Check if authentication is required for the wiki.
+    检查 Wiki 是否需要身份验证。
     """
     return {"auth_required": WIKI_AUTH_MODE}
 
 @app.post("/auth/validate")
 async def validate_auth_code(request: AuthorizationConfig):
     """
-    Check authorization code.
+    校验授权码是否正确。
     """
     return {"success": WIKI_AUTH_CODE == request.code}
 
@@ -176,7 +176,7 @@ class CustomModelAdd(BaseModel):
 
 @app.get("/models/runtime_config")
 async def get_runtime_config():
-    """Get current runtime configuration including provider URLs."""
+    """获取当前运行时配置，包括各提供商的 base URL。"""
     provider_urls = {}
     for provider_id in configs.get("providers", {}).keys():
         provider_urls[provider_id] = get_provider_base_url(provider_id)
@@ -184,13 +184,13 @@ async def get_runtime_config():
 
 @app.post("/models/provider_url")
 async def update_provider_url(request: ProviderUrlUpdate):
-    """Update the base URL for a provider at runtime."""
+    """在运行时更新指定提供商的 base URL。"""
     set_provider_base_url(request.provider, request.base_url)
     return {"success": True, "provider": request.provider, "base_url": request.base_url}
 
 @app.post("/models/add_model")
 async def add_custom_model(request: CustomModelAdd):
-    """Add a custom model to a provider's model list at runtime."""
+    """在运行时向指定提供商的模型列表中添加自定义模型。"""
     if "providers" not in configs:
         raise HTTPException(status_code=500, detail="Provider configuration not loaded")
     provider_config = configs["providers"].get(request.provider)
@@ -206,30 +206,29 @@ async def add_custom_model(request: CustomModelAdd):
 @app.get("/models/config", response_model=ModelConfig)
 async def get_model_config():
     """
-    Get available model providers and their models.
+    获取可用的模型提供商及其模型列表。
 
-    This endpoint returns the configuration of available model providers and their
-    respective models that can be used throughout the application.
+    返回应用中所有可用的模型提供商及其对应模型的配置信息。
 
     Returns:
-        ModelConfig: A configuration object containing providers and their models
+        ModelConfig: 包含提供商和模型列表的配置对象。
     """
     try:
-        logger.info("Fetching model configurations")
+        logger.info("正在获取模型配置")
 
-        # Create providers from the config file
+        # 根据配置文件构建提供商列表
         providers = []
         default_provider = configs.get("default_provider", "google")
 
-        # Add provider configuration based on config.py
+        # 遍历 config.py 中的提供商配置
         for provider_id, provider_config in configs["providers"].items():
             models = []
-            # Add models from config
+            # 从配置中添加模型
             for model_id in provider_config["models"].keys():
-                # Get a more user-friendly display name if possible
+                # 尽可能使用更友好的显示名称
                 models.append(Model(id=model_id, name=model_id))
 
-            # Add provider with its models
+            # 添加提供商及其模型
             providers.append(
                 Provider(
                     id=provider_id,
@@ -275,27 +274,27 @@ async def export_wiki(request: WikiExportRequest):
         A downloadable file in the requested format
     """
     try:
-        logger.info(f"Exporting wiki for {request.repo_url} in {request.format} format")
+        logger.info(f"正在导出 {request.repo_url} 的 Wiki，格式：{request.format}")
 
-        # Extract repository name from URL for the filename
+        # 从 URL 中提取仓库名称，用于生成文件名
         repo_parts = request.repo_url.rstrip('/').split('/')
         repo_name = repo_parts[-1] if len(repo_parts) > 0 else "wiki"
 
-        # Get current timestamp for the filename
+        # 获取当前时间戳，用于文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         if request.format == "markdown":
-            # Generate Markdown content
+            # 生成 Markdown 格式内容
             content = generate_markdown_export(request.repo_url, request.pages)
             filename = f"{repo_name}_wiki_{timestamp}.md"
             media_type = "text/markdown"
-        else:  # JSON format
-            # Generate JSON content
+        else:  # JSON 格式
+            # 生成 JSON 格式内容
             content = generate_json_export(request.repo_url, request.pages)
             filename = f"{repo_name}_wiki_{timestamp}.json"
             media_type = "application/json"
 
-        # Create response with appropriate headers for file download
+        # 创建包含文件下载头的响应
         response = Response(
             content=content,
             media_type=media_type,
@@ -307,17 +306,16 @@ async def export_wiki(request: WikiExportRequest):
         return response
 
     except Exception as e:
-        error_msg = f"Error exporting wiki: {str(e)}"
+        error_msg = f"导出 Wiki 时出错: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.post("/upload/repo")
 async def upload_repo_zip(file: UploadFile = File(...)):
     """
-    Upload a ZIP file containing source code. Extracts to a server-side temp directory
-    and returns the path so it can be used with /local_repo/structure.
-    This solves the problem where 'local' paths refer to the user's machine
-    but the server cannot access them.
+    上传包含源代码的 ZIP 文件。
+    解压到服务器临时目录后返回路径，供 /local_repo/structure 接口使用。
+    解决了「本地路径」仅存在于用户机器上、服务器无法访问的问题。
     """
     import tempfile
     import zipfile
@@ -331,39 +329,39 @@ async def upload_repo_zip(file: UploadFile = File(...)):
 
     tmp_dir = None
     try:
-        # Create a persistent temp directory (not auto-cleaned)
+        # 创建持久化临时目录（不自动清理）
         upload_base = os.path.join(tempfile.gettempdir(), "deepwiki_uploads")
         os.makedirs(upload_base, exist_ok=True)
 
-        # Use a unique name based on the uploaded filename
+        # 根据上传文件名生成唯一目录名
         import re as _re
         safe_name = _re.sub(r'[^\w\-.]', '_', file.filename.rsplit('.', 1)[0])
         tmp_dir = os.path.join(upload_base, f"{safe_name}_{int(datetime.now().timestamp())}")
         os.makedirs(tmp_dir, exist_ok=True)
 
-        # Save uploaded file
+        # 保存上传的文件
         zip_path = os.path.join(tmp_dir, file.filename)
         with open(zip_path, 'wb') as f:
             content = await file.read()
             f.write(content)
 
-        # Extract ZIP
+        # 解压 ZIP 文件
         extract_dir = os.path.join(tmp_dir, "repo")
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(extract_dir)
 
-        # Remove the zip file to save space
+        # 解压完成后删除 ZIP 文件以节省空间
         os.remove(zip_path)
 
-        # If the zip contains a single top-level directory, use that as the repo root
+        # 如果 ZIP 内只有一个顶层目录，将其作为仓库根目录
         entries = os.listdir(extract_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(extract_dir, entries[0])):
             repo_path = os.path.join(extract_dir, entries[0])
         else:
             repo_path = extract_dir
 
-        logger.info(f"Uploaded repo extracted to: {repo_path}")
-        return {"path": repo_path, "message": "Upload successful"}
+        logger.info(f"上传的仓库已解压到: {repo_path}")
+        return {"path": repo_path, "message": "上传成功"}
 
     except zipfile.BadZipFile:
         if tmp_dir and os.path.exists(tmp_dir):
@@ -382,8 +380,8 @@ async def upload_repo_zip(file: UploadFile = File(...)):
         )
 
 @app.get("/local_repo/structure")
-async def get_local_repo_structure(path: str = Query(None, description="Path to local repository")):
-    """Return the file tree and README content for a local repository."""
+async def get_local_repo_structure(path: str = Query(None, description="本地仓库路径")):
+    """返回本地仓库的文件树结构及 README 内容。"""
     if not path:
         return JSONResponse(
             status_code=400,
@@ -399,19 +397,19 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
         )
 
     try:
-        logger.info(f"Processing local repository at: {path}")
+        logger.info(f"正在处理本地仓库: {path}")
         file_tree_lines = []
         readme_content = ""
 
-        # Use comprehensive exclusion list from repo.json config
+        # 从 repo.json 配置中读取排除目录列表
         repo_config = configs.get("repo_config", {}).get("file_filters", {})
         excluded_dir_names = set()
         for d in repo_config.get("excluded_dirs", []):
-            # Extract directory name from patterns like "./.venv/", "./node_modules/"
+            # 从 "./.venv/"、"./node_modules/" 等模式中提取目录名
             name = d.strip('./').strip('/')
             if name:
                 excluded_dir_names.add(name)
-        # Always exclude these common non-code directories
+        # 始终排除以下常见非代码目录
         excluded_dir_names.update({
             '.git', '.svn', '.hg', '.bzr', '__pycache__', 'node_modules',
             '.venv', 'venv', 'env', 'virtualenv', 'bower_components',
@@ -422,15 +420,15 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
             '.gradle', '.mvn', 'vendor', 'packages',
         })
 
-        # Build set of excluded file extensions from repo.json
+        # 从 repo.json 构建排除文件扩展名集合
         import fnmatch
         excluded_file_patterns = repo_config.get("excluded_files", [])
         excluded_extensions = set()
         for p in excluded_file_patterns:
             if p.startswith('*.'):
-                excluded_extensions.add(p[1:])  # e.g., '.min.js'
+                excluded_extensions.add(p[1:])  # 如 '.min.js'
 
-        # Binary/non-code extensions to always exclude
+        # 始终排除二进制/非代码文件扩展名
         excluded_extensions.update({
             '.db', '.sqlite', '.sqlite3', '.pkl', '.pickle', '.npy', '.npz',
             '.h5', '.hdf5', '.parquet', '.feather', '.arrow',
@@ -441,10 +439,10 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
             '.bin', '.dat', '.log',
         })
 
-        MAX_FILES = 5000  # Safety limit
+        MAX_FILES = 5000  # 文件数量安全上限
 
         for root, dirs, files in os.walk(path):
-            # Exclude dirs by name
+            # 按目录名排除（跳过隐藏目录）
             dirs[:] = [d for d in dirs if d not in excluded_dir_names and not d.startswith('.')]
 
             for file in files:
@@ -452,11 +450,11 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
                     break
                 if file.startswith('.') or file == '.DS_Store':
                     continue
-                # Check extension
+                # 检查文件扩展名
                 _, ext = os.path.splitext(file.lower())
                 if ext in excluded_extensions:
                     continue
-                # Check filename patterns
+                # 检查文件名模式
                 skip = False
                 for pattern in excluded_file_patterns:
                     if not pattern.startswith('*.') and fnmatch.fnmatch(file, pattern):
@@ -468,7 +466,7 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
                 rel_dir = os.path.relpath(root, path)
                 rel_file = os.path.join(rel_dir, file) if rel_dir != '.' else file
                 file_tree_lines.append(rel_file.replace('\\', '/'))
-                # Find README.md (case-insensitive)
+                # 查找 README.md（大小写不敏感）
                 if file.lower() == 'readme.md' and not readme_content:
                     try:
                         with open(os.path.join(root, file), 'r', encoding='utf-8', errors='replace') as f:
@@ -482,28 +480,27 @@ async def get_local_repo_structure(path: str = Query(None, description="Path to 
                 break
 
         file_tree_str = '\n'.join(sorted(file_tree_lines))
-        logger.info(f"Local repo structure: {len(file_tree_lines)} files, {len(file_tree_str)} chars")
+        logger.info(f"本地仓库结构: {len(file_tree_lines)} 个文件，{len(file_tree_str)} 个字符")
         return {"file_tree": file_tree_str, "readme": readme_content}
     except Exception as e:
-        logger.error(f"Error processing local repository: {str(e)}")
+        logger.error(f"处理本地仓库时出错: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"error": f"Error processing local repository: {str(e)}"}
+            content={"error": f"处理本地仓库时出错: {str(e)}"}
         )
 
 @app.get("/repo/structure")
 async def get_repo_structure(
-    repo_url: str = Query(..., description="Repository URL"),
-    repo_type: str = Query("gitea", description="Repository type (gitea, gitee, github, gitlab, svn, etc.)"),
-    token: str = Query(None, description="Access token for private repositories"),
-    svn_username: str = Query(None, description="SVN username for authentication"),
-    svn_password: str = Query(None, description="SVN password for authentication")
+    repo_url: str = Query(..., description="仓库 URL"),
+    repo_type: str = Query("gitea", description="仓库类型（gitea、gitee、github、gitlab、svn 等）"),
+    token: str = Query(None, description="私有仓库的访问令牌"),
+    svn_username: str = Query(None, description="SVN 用户名"),
+    svn_password: str = Query(None, description="SVN 密码")
 ):
     """
-    Fetch repository structure by cloning the repo on the backend.
-    Used for Gitea/Gitee/SVN/any remote repos to avoid CORS issues in the browser.
-    Returns file tree and README content.
-    Supports both Git and SVN repositories.
+    通过在后端克隆仓库来获取仓库文件结构。
+    用于 Gitea/Gitee/SVN 等远程仓库，以避免浏览器 CORS 问题。
+    返回文件树和 README 内容，支持 Git 和 SVN 两种仓库类型。
     """
     import tempfile
     import shutil
@@ -514,20 +511,20 @@ async def get_repo_structure(
 
     tmp_dir = None
     try:
-        logger.info(f"Fetching remote repo structure: {repo_url} (type={repo_type}, is_svn={is_svn})")
+        logger.info(f"正在获取远程仓库结构: {repo_url}（类型={repo_type}，is_svn={is_svn}）")
 
-        # Create a temporary directory for cloning/checkout
+        # 创建用于克隆/检出的临时目录
         tmp_dir = tempfile.mkdtemp(prefix="deepwiki_repo_")
 
         if is_svn:
-            # --- SVN checkout ---
+            # --- SVN 检出 ---
             svn_cmd = ["svn", "checkout", "--depth", "infinity"]
 
-            # Add authentication if provided
+            # 若提供了认证信息则附加到命令中
             if svn_username and svn_password:
                 svn_cmd.extend(["--username", svn_username, "--password", svn_password, "--non-interactive", "--trust-server-cert"])
             elif token:
-                # Use token as password with empty username, or as username
+                # 以 token 作为密码，用户名留空
                 svn_cmd.extend(["--username", "", "--password", token, "--non-interactive", "--trust-server-cert"])
             else:
                 svn_cmd.extend(["--non-interactive", "--trust-server-cert"])
@@ -541,14 +538,14 @@ async def get_repo_structure(
 
             if result.returncode != 0:
                 error_msg = result.stderr
-                # Sanitize credentials from error message
+                # 从错误信息中清除敏感凭据
                 if svn_password:
                     error_msg = error_msg.replace(svn_password, '***')
                 if token:
                     error_msg = error_msg.replace(token, '***')
 
-                # Try svn list as fallback (for when checkout is not allowed but listing is)
-                logger.warning(f"SVN checkout failed, trying svn list: {error_msg}")
+                # checkout 失败时降级尝试 svn list（允许列目录但不允许检出的场景）
+                logger.warning(f"SVN checkout 失败，尝试 svn list: {error_msg}")
                 list_cmd = ["svn", "list", "-R"]
                 if svn_username and svn_password:
                     list_cmd.extend(["--username", svn_username, "--password", svn_password, "--non-interactive", "--trust-server-cert"])
@@ -569,16 +566,16 @@ async def get_repo_structure(
                         list_error = list_error.replace(svn_password, '***')
                     if token:
                         list_error = list_error.replace(token, '***')
-                    raise Exception(f"SVN checkout and list both failed. Checkout error: {error_msg}. List error: {list_error}")
+                    raise Exception(f"SVN checkout 和 list 均失败。checkout 错误: {error_msg}。list 错误: {list_error}")
 
-                # Parse svn list output (one file per line)
+                # 解析 svn list 输出（每行一个文件）
                 file_tree_lines = []
                 excluded_dirs = {'.svn', '__pycache__', 'node_modules', '.venv', 'venv',
                                  'dist', 'build', '.idea', '.vscode', 'target', 'bin', 'obj'}
                 for line in list_result.stdout.strip().split('\n'):
                     line = line.strip()
                     if not line or line.endswith('/'):
-                        # Skip directories (they end with /)
+                        # 跳过目录条目（目录以 / 结尾）
                         # But check if any excluded dir is in the path
                         continue
                     # Check if path contains excluded directories
@@ -600,7 +597,7 @@ async def get_repo_structure(
                 return {"file_tree": file_tree_str, "readme": ""}
 
         else:
-            # --- Git clone ---
+            # --- Git 浅克隆 ---
             from urllib.parse import urlparse, urlunparse, quote
             parsed = urlparse(repo_url)
             clone_url = repo_url
@@ -611,10 +608,10 @@ async def get_repo_structure(
                 elif repo_type == "bitbucket":
                     clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
                 else:
-                    # github, gitea, gitee all use token@host format
+                    # github、gitea、gitee 均使用 token@host 格式
                     clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
 
-            # Shallow clone (depth=1) for speed
+            # 浅克隆（depth=1）以加快速度
             result = subprocess.run(
                 ["git", "clone", "--depth", "1", clone_url, tmp_dir],
                 capture_output=True, text=True, timeout=120
@@ -622,9 +619,9 @@ async def get_repo_structure(
 
             if result.returncode != 0:
                 error_msg = result.stderr.replace(token, '***') if token else result.stderr
-                raise Exception(f"Git clone failed: {error_msg}")
+                raise Exception(f"Git 克隆失败: {error_msg}")
 
-        # Walk the cloned/checked-out repo to get file tree and README
+        # 遍历克隆/检出后的仓库，构建文件树并提取 README
         file_tree_lines = []
         readme_content = ""
         excluded_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.svn', '.hg',
@@ -643,19 +640,19 @@ async def get_repo_structure(
                         with open(os.path.join(root, file), 'r', encoding='utf-8', errors='replace') as f:
                             readme_content = f.read()
                     except Exception as e:
-                        logger.warning(f"Could not read README.md: {str(e)}")
+                        logger.warning(f"无法读取 README.md: {str(e)}")
 
         file_tree_str = '\n'.join(sorted(file_tree_lines))
         return {"file_tree": file_tree_str, "readme": readme_content}
 
     except Exception as e:
-        logger.error(f"Error fetching repo structure: {str(e)}")
+        logger.error(f"获取仓库结构时出错: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"error": f"Error fetching repo structure: {str(e)}"}
+            content={"error": f"获取仓库结构时出错: {str(e)}"}
         )
     finally:
-        # Clean up temp directory
+        # 清理临时目录
         if tmp_dir and os.path.exists(tmp_dir):
             try:
                 shutil.rmtree(tmp_dir)
@@ -672,9 +669,9 @@ class RepoFilesRequest(BaseModel):
 @app.post("/repo/files")
 async def get_repo_files(request: RepoFilesRequest):
     """
-    Read specific file contents from a repository.
-    For local repos, reads directly. For remote repos, uses cached clone.
-    Returns a dict mapping file paths to their contents.
+    读取仓库中指定文件的内容。
+    本地仓库直接读取；远程仓库使用缓存克隆目录。
+    返回文件路径到文件内容的映射字典。
     """
     import tempfile
     import shutil
@@ -687,9 +684,9 @@ async def get_repo_files(request: RepoFilesRequest):
         if request.type == "local":
             repo_path = request.repo_url
             if not os.path.isdir(repo_path):
-                raise HTTPException(status_code=404, detail=f"Local directory not found: {repo_path}")
+                raise HTTPException(status_code=404, detail=f"本地目录不存在: {repo_path}")
         else:
-            # For remote repos, clone to temp dir (shallow)
+            # 远程仓库：克隆到临时目录（浅克隆）
             tmp_dir = tempfile.mkdtemp(prefix="deepwiki_files_")
             from urllib.parse import urlparse, urlunparse, quote
             parsed = urlparse(request.repo_url)
@@ -705,18 +702,18 @@ async def get_repo_files(request: RepoFilesRequest):
             )
             if result.returncode != 0:
                 error_msg = result.stderr.replace(request.token, '***') if request.token else result.stderr
-                raise Exception(f"Git clone failed: {error_msg}")
+                raise Exception(f"Git 克隆失败: {error_msg}")
             repo_path = tmp_dir
 
-        # Read requested files
-        MAX_FILE_SIZE = 100_000  # 100KB per file
-        MAX_TOTAL_SIZE = 500_000  # 500KB total
+        # 读取请求的文件内容
+        MAX_FILE_SIZE = 100_000  # 单文件上限 100KB
+        MAX_TOTAL_SIZE = 500_000  # 总大小上限 500KB
         total_size = 0
 
         for file_path in request.file_paths:
             if total_size >= MAX_TOTAL_SIZE:
                 break
-            # Sanitize path to prevent directory traversal
+            # 规范化路径，防止目录遍历攻击
             safe_path = os.path.normpath(file_path).lstrip(os.sep).lstrip('/')
             full_path = os.path.join(repo_path, safe_path)
 
@@ -726,7 +723,7 @@ async def get_repo_files(request: RepoFilesRequest):
 
             file_size = os.path.getsize(full_path)
             if file_size > MAX_FILE_SIZE:
-                results[file_path] = f"[File too large: {file_size} bytes, skipped]"
+                results[file_path] = f"[文件过大: {file_size} 字节，已跳过]"
                 continue
 
             try:
@@ -735,14 +732,14 @@ async def get_repo_files(request: RepoFilesRequest):
                 results[file_path] = content
                 total_size += len(content)
             except Exception as e:
-                results[file_path] = f"[Error reading file: {str(e)}]"
+                results[file_path] = f"[读取文件时出错: {str(e)}]"
 
         return {"files": results}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error reading repo files: {str(e)}")
+        logger.error(f"读取仓库文件时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if tmp_dir and os.path.exists(tmp_dir):
@@ -754,21 +751,21 @@ async def get_repo_files(request: RepoFilesRequest):
 
 def generate_markdown_export(repo_url: str, pages: List[WikiPage]) -> str:
     """
-    Generate Markdown export of wiki pages.
+    将 wiki 页面生成 Markdown 格式的导出内容。
 
     Args:
-        repo_url: The repository URL
-        pages: List of wiki pages
+        repo_url: 仓库 URL
+        pages: wiki 页面列表
 
     Returns:
-        Markdown content as string
+        Markdown 格式的字符串内容
     """
-    # Start with metadata
-    markdown = f"# Wiki Documentation for {repo_url}\n\n"
-    markdown += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    # 从元数据开始构建 Markdown 文档
+    markdown = f"# {repo_url} 的 Wiki 文档\n\n"
+    markdown += f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
-    # Add table of contents
-    markdown += "## Table of Contents\n\n"
+    # 添加目录
+    markdown += "## 目录\n\n"
     for page in pages:
         markdown += f"- [{page.title}](#{page.id})\n"
     markdown += "\n"
@@ -791,9 +788,9 @@ def generate_markdown_export(repo_url: str, pages: List[WikiPage]) -> str:
                     related_titles.append(f"[{related_page.title}](#{related_id})")
 
             if related_titles:
-                markdown += "Related topics: " + ", ".join(related_titles) + "\n\n"
+                markdown += "相关主题: " + ", ".join(related_titles) + "\n\n"
 
-        # Add page content
+        # 添加页面正文内容
         markdown += f"{page.content}\n\n"
         markdown += "---\n\n"
 
@@ -801,16 +798,16 @@ def generate_markdown_export(repo_url: str, pages: List[WikiPage]) -> str:
 
 def generate_json_export(repo_url: str, pages: List[WikiPage]) -> str:
     """
-    Generate JSON export of wiki pages.
+    将 wiki 页面生成 JSON 格式的导出内容。
 
     Args:
-        repo_url: The repository URL
-        pages: List of wiki pages
+        repo_url: 仓库 URL
+        pages: wiki 页面列表
 
     Returns:
-        JSON content as string
+        JSON 格式的字符串内容
     """
-    # Create a dictionary with metadata and pages
+    # 创建包含元数据和页面内容的字典
     export_data = {
         "metadata": {
             "repository": repo_url,
@@ -820,21 +817,21 @@ def generate_json_export(repo_url: str, pages: List[WikiPage]) -> str:
         "pages": [page.model_dump() for page in pages]
     }
 
-    # Convert to JSON string with pretty formatting
+    # 格式化为 JSON 字符串并返回
     return json.dumps(export_data, indent=2)
 
-# Import the simplified chat implementation
+# 导入简化版聊天实现
 from api.simple_chat import chat_completions_stream
 from api.websocket_wiki import handle_websocket_chat
 
-# Add the chat_completions_stream endpoint to the main app
+# 将 chat_completions_stream 端点注册到主应用
 app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=["POST"])
 
-# Add the WebSocket endpoint
+# 注册 WebSocket 端点
 app.add_api_websocket_route("/ws/chat", handle_websocket_chat)
 
-# --- Direct LLM streaming endpoint (no RAG) ---
-# Used for wiki structure determination where file tree is already in the prompt
+# --- 直接 LLM 流式端点（无 RAG）---
+# 用于 wiki 结构生成，此时文件树已包含在 prompt 中
 
 from adalflow.components.model_client.ollama_client import OllamaClient
 from adalflow.core.types import ModelType
@@ -842,16 +839,16 @@ from api.openai_client import OpenAIClient
 from api.config import get_model_config as get_model_config_func, VLLM_API_KEY, VLLM_BASE_URL, get_provider_base_url as get_base_url
 
 class DirectChatRequest(BaseModel):
-    messages: List[Dict[str, str]] = Field(..., description="List of chat messages")
-    provider: str = Field("deepseek", description="Model provider")
-    model: Optional[str] = Field(None, description="Model name")
-    api_key: Optional[str] = Field(None, description="Optional API key override for the provider")
+    messages: List[Dict[str, str]] = Field(..., description="聊天消息列表")
+    provider: str = Field("deepseek", description="模型提供商")
+    model: Optional[str] = Field(None, description="模型名称")
+    api_key: Optional[str] = Field(None, description="可选的 API Key 覆盖")
 
 @app.post("/chat/direct/stream")
 async def chat_direct_stream(request: DirectChatRequest):
     """
-    Direct LLM streaming endpoint without RAG.
-    Used for wiki structure determination where the file tree is already in the prompt.
+    直接 LLM 流式端点，不使用 RAG。
+    用于 wiki 结构生成，此时文件树已包含在 prompt 中。
     """
     import asyncio
 
@@ -864,7 +861,7 @@ async def chat_direct_stream(request: DirectChatRequest):
 
         model_config = get_model_config_func(request.provider, request.model)["model_kwargs"]
 
-        # Resolve API key: use per-request override if provided, else fall back to env
+        # 解析 API Key：优先使用请求中的覆盖值，否则回退到环境变量
         request_api_key = request.api_key.strip() if request.api_key and request.api_key.strip() else None
 
         if request.provider == "ollama":
@@ -890,7 +887,7 @@ async def chat_direct_stream(request: DirectChatRequest):
             if "top_p" in model_config:
                 model_kwargs["top_p"] = model_config["top_p"]
         else:
-            # DeepSeek or any OpenAI-compatible provider
+            # DeepSeek 或其他 OpenAI 兼容提供商
             provider_url = get_base_url(request.provider)
             if request_api_key:
                 model = OpenAIClient(api_key=request_api_key, base_url=provider_url)
@@ -911,7 +908,7 @@ async def chat_direct_stream(request: DirectChatRequest):
         )
 
         def strip_think_tags(text: str) -> str:
-            """Strip <think> and </think> tags from reasoning model output."""
+            """去除推理模型输出中的 <think> 和 </think> 标签。"""
             import re as _re
             # Remove <think>...</think> blocks entirely (including content)
             cleaned = _re.sub(r'<think>.*?</think>', '', text, flags=_re.DOTALL)
@@ -944,31 +941,31 @@ async def chat_direct_stream(request: DirectChatRequest):
                             if delta is not None:
                                 text = getattr(delta, "content", None)
                                 if text is not None:
-                                    # Strip think tags for all providers (reasoning models like QWQ via vllm)
+                                    # 对所有提供商去除 think 标签（如 vllm 下的 QWQ 推理模型）
                                     clean_text = text.replace('<think>', '').replace('</think>', '')
                                     yield clean_text
             except Exception as e:
-                logger.error(f"Error in direct LLM streaming: {str(e)}")
+                logger.error(f"直接 LLM 流式响应出错: {str(e)}")
                 yield f"\n[STREAM_ERROR] {str(e)}"
 
         return StreamingResponse(generate(), media_type="text/plain")
 
     except Exception as e:
-        logger.error(f"Error in chat_direct_stream: {str(e)}")
+        logger.error(f"chat_direct_stream 出错: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Wiki Cache Helper Functions ---
 
 WIKI_CACHE_DIR = os.path.join(get_adalflow_default_root_path(), "wikicache")
-os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
+os.makedirs(WIKI_CACHE_DIR, exist_ok=True)  # 确保缓存目录存在
 
 def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str) -> str:
-    """Generates the file path for a given wiki cache."""
+    """生成指定仓库 wiki 缓存文件的路径。"""
     filename = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
     return os.path.join(WIKI_CACHE_DIR, filename)
 
 async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) -> Optional[WikiCacheData]:
-    """Reads wiki cache data from the file system."""
+    """从文件系统读取 wiki 缓存数据。"""
     cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
     if os.path.exists(cache_path):
         try:
@@ -976,12 +973,12 @@ async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) 
                 data = json.load(f)
                 return WikiCacheData(**data)
         except Exception as e:
-            logger.error(f"Error reading wiki cache from {cache_path}: {e}")
+            logger.error(f"从 {cache_path} 读取 wiki 缓存时出错: {e}")
             return None
     return None
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
-    """Saves wiki cache data to the file system."""
+    """将 wiki 缓存数据保存到文件系统。"""
     cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language)
     logger.info(f"Attempting to save wiki cache. Path: {cache_path}")
     try:
@@ -992,111 +989,110 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
             provider=data.provider,
             model=data.model
         )
-        # Log size of data to be cached for debugging (avoid logging full content if large)
+        # 记录待缓存数据的大小（避免日志中输出完整内容）
         try:
             payload_json = payload.model_dump_json()
             payload_size = len(payload_json.encode('utf-8'))
-            logger.info(f"Payload prepared for caching. Size: {payload_size} bytes.")
+            logger.info(f"缓存载荷已准备就绪，大小: {payload_size} 字节。")
         except Exception as ser_e:
-            logger.warning(f"Could not serialize payload for size logging: {ser_e}")
+            logger.warning(f"无法序列化载荷以记录大小: {ser_e}")
 
 
-        logger.info(f"Writing cache file to: {cache_path}")
+        logger.info(f"正在将缓存文件写入: {cache_path}")
         with open(cache_path, 'w', encoding='utf-8') as f:
             json.dump(payload.model_dump(), f, indent=2)
-        logger.info(f"Wiki cache successfully saved to {cache_path}")
+        logger.info(f"Wiki 缓存已成功保存到 {cache_path}")
         return True
     except IOError as e:
-        logger.error(f"IOError saving wiki cache to {cache_path}: {e.strerror} (errno: {e.errno})", exc_info=True)
+        logger.error(f"保存 Wiki 缓存到 {cache_path} 时发生 IOError: {e.strerror}（errno: {e.errno}）", exc_info=True)
         return False
     except Exception as e:
-        logger.error(f"Unexpected error saving wiki cache to {cache_path}: {e}", exc_info=True)
+        logger.error(f"保存 Wiki 缓存到 {cache_path} 时发生意外错误: {e}", exc_info=True)
         return False
 
-# --- Wiki Cache API Endpoints ---
+# --- Wiki 缓存 API 端点 ---
 
 @app.get("/api/wiki_cache", response_model=Optional[WikiCacheData])
 async def get_cached_wiki(
-    owner: str = Query(..., description="Repository owner"),
-    repo: str = Query(..., description="Repository name"),
-    repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
-    language: str = Query(..., description="Language of the wiki content")
+    owner: str = Query(..., description="仓库所有者"),
+    repo: str = Query(..., description="仓库名称"),
+    repo_type: str = Query(..., description="仓库类型（如 github、gitlab）"),
+    language: str = Query(..., description="Wiki 内容的语言")
 ):
     """
-    Retrieves cached wiki data (structure and generated pages) for a repository.
+    获取指定仓库的 Wiki 缓存数据（结构和已生成页面）。
     """
-    # Language validation
+    # 语言合法性校验
     supported_langs = configs["lang_config"]["supported_languages"]
     if not supported_langs.__contains__(language):
         language = configs["lang_config"]["default"]
 
-    logger.info(f"Attempting to retrieve wiki cache for {owner}/{repo} ({repo_type}), lang: {language}")
+    logger.info(f"正在尝试获取 {owner}/{repo}（{repo_type}）的 Wiki 缓存，语言: {language}")
     cached_data = await read_wiki_cache(owner, repo, repo_type, language)
     if cached_data:
         return cached_data
     else:
-        # Return 200 with null body if not found, as frontend expects this behavior
-        # Or, raise HTTPException(status_code=404, detail="Wiki cache not found") if preferred
-        logger.info(f"Wiki cache not found for {owner}/{repo} ({repo_type}), lang: {language}")
+        # 未找到缓存时返回 200 + null，前端依赖此行为
+        logger.info(f"未找到 {owner}/{repo}（{repo_type}）的 Wiki 缓存，语言: {language}")
         return None
 
 @app.post("/api/wiki_cache")
 async def store_wiki_cache(request_data: WikiCacheRequest):
     """
-    Stores generated wiki data (structure and pages) to the server-side cache.
+    将生成的 Wiki 数据（结构和页面）保存到服务端缓存。
     """
-    # Language validation
+    # 语言合法性校验
     supported_langs = configs["lang_config"]["supported_languages"]
 
     if not supported_langs.__contains__(request_data.language):
         request_data.language = configs["lang_config"]["default"]
 
-    logger.info(f"Attempting to save wiki cache for {request_data.repo.owner}/{request_data.repo.repo} ({request_data.repo.type}), lang: {request_data.language}")
+    logger.info(f"正在尝试保存 {request_data.repo.owner}/{request_data.repo.repo}（{request_data.repo.type}）的 Wiki 缓存，语言: {request_data.language}")
     success = await save_wiki_cache(request_data)
     if success:
-        return {"message": "Wiki cache saved successfully"}
+        return {"message": "Wiki 缓存已成功保存"}
     else:
-        raise HTTPException(status_code=500, detail="Failed to save wiki cache")
+        raise HTTPException(status_code=500, detail="保存 Wiki 缓存失败")
 
 @app.delete("/api/wiki_cache")
 async def delete_wiki_cache(
-    owner: str = Query(..., description="Repository owner"),
-    repo: str = Query(..., description="Repository name"),
-    repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
-    language: str = Query(..., description="Language of the wiki content"),
-    authorization_code: Optional[str] = Query(None, description="Authorization code")
+    owner: str = Query(..., description="仓库所有者"),
+    repo: str = Query(..., description="仓库名称"),
+    repo_type: str = Query(..., description="仓库类型（如 github、gitlab）"),
+    language: str = Query(..., description="Wiki 内容的语言"),
+    authorization_code: Optional[str] = Query(None, description="授权码")
 ):
     """
-    Deletes a specific wiki cache from the file system.
+    从文件系统中删除指定的 Wiki 缓存。
     """
-    # Language validation
+    # 语言合法性校验
     supported_langs = configs["lang_config"]["supported_languages"]
     if not supported_langs.__contains__(language):
-        raise HTTPException(status_code=400, detail="Language is not supported")
+        raise HTTPException(status_code=400, detail="不支持该语言")
 
     if WIKI_AUTH_MODE:
-        logger.info("check the authorization code")
+        logger.info("正在验证授权码")
         if not authorization_code or WIKI_AUTH_CODE != authorization_code:
-            raise HTTPException(status_code=401, detail="Authorization code is invalid")
+            raise HTTPException(status_code=401, detail="授权码无效")
 
-    logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}")
+    logger.info(f"正在尝试删除 {owner}/{repo}（{repo_type}）的 Wiki 缓存，语言: {language}")
     cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
 
     if os.path.exists(cache_path):
         try:
             os.remove(cache_path)
-            logger.info(f"Successfully deleted wiki cache: {cache_path}")
-            return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
+            logger.info(f"已成功删除 Wiki 缓存: {cache_path}")
+            return {"message": f"已成功删除 {owner}/{repo}（{language}）的 Wiki 缓存"}
         except Exception as e:
-            logger.error(f"Error deleting wiki cache {cache_path}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete wiki cache: {str(e)}")
+            logger.error(f"删除 Wiki 缓存 {cache_path} 时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"删除 Wiki 缓存失败: {str(e)}")
     else:
-        logger.warning(f"Wiki cache not found, cannot delete: {cache_path}")
-        raise HTTPException(status_code=404, detail="Wiki cache not found")
+        logger.warning(f"Wiki 缓存不存在，无法删除: {cache_path}")
+        raise HTTPException(status_code=404, detail="Wiki 缓存不存在")
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Docker and monitoring"""
+    """健康检查端点，用于 Docker 和监控系统。"""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -1105,12 +1101,12 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Root endpoint to check if the API is running and list available endpoints dynamically."""
-    # Collect routes dynamically from the FastAPI app
+    """根路由端点，检查 API 运行状态并动态列出所有可用端点。"""
+    # 动态收集 FastAPI 应用中注册的所有路由
     endpoints = {}
     for route in app.routes:
         if hasattr(route, "methods") and hasattr(route, "path"):
-            # Skip docs and static routes
+            # 跳过文档和静态路由
             if route.path in ["/openapi.json", "/docs", "/redoc", "/favicon.ico"]:
                 continue
             # Group endpoints by first path segment

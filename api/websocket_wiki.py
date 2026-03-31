@@ -19,21 +19,21 @@ from api.data_pipeline import count_tokens, get_file_content
 from api.openai_client import OpenAIClient
 from api.rag import RAG
 
-# Configure logging
+# 配置日志记录
 from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Models for the API
+# API 数据模型
 class ChatMessage(BaseModel):
-    role: str  # 'user' or 'assistant'
+    role: str  # 'user'（用户）或 'assistant'（助手）
     content: str
 
 class ChatCompletionRequest(BaseModel):
     """
-    Model for requesting a chat completion.
+    WebSocket 聊天补全请求数据模型。
     """
     repo_url: str = Field(..., description="URL of the repository to query")
     messages: List[ChatMessage] = Field(..., description="List of chat messages")
@@ -56,8 +56,7 @@ class ChatCompletionRequest(BaseModel):
 
 async def handle_websocket_chat(websocket: WebSocket):
     """
-    Handle WebSocket connection for chat completions.
-    This replaces the HTTP streaming endpoint with a WebSocket connection.
+    处理 WebSocket 聊天连接，替代 HTTP 流式接口实现双向通信。
     """
     await websocket.accept()
 

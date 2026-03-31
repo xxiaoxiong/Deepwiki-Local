@@ -21,36 +21,36 @@ from api.prompts import (
     SIMPLE_CHAT_SYSTEM_PROMPT
 )
 
-# Configure logging
+# 配置日志记录
 from api.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Initialize FastAPI app
+# 初始化 FastAPI 应用
 app = FastAPI(
     title="Simple Chat API",
-    description="Simplified API for streaming chat completions"
+    description="用于流式聊天补全的简化 API"
 )
 
-# Configure CORS
+# 配置跨域资源共享（CORS）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],  # 允许所有来源
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],  # 允许所有 HTTP 方法
+    allow_headers=["*"],  # 允许所有请求头
 )
 
-# Models for the API
+# API 数据模型
 class ChatMessage(BaseModel):
-    role: str  # 'user' or 'assistant'
+    role: str  # 'user'（用户）或 'assistant'（助手）
     content: str
 
 class ChatCompletionRequest(BaseModel):
     """
-    Model for requesting a chat completion.
+    聊天补全请求数据模型。
     """
     repo_url: str = Field(..., description="URL of the repository to query")
     messages: List[ChatMessage] = Field(..., description="List of chat messages")
@@ -70,7 +70,7 @@ class ChatCompletionRequest(BaseModel):
 
 @app.post("/chat/completions/stream")
 async def chat_completions_stream(request: ChatCompletionRequest):
-    """Stream a chat completion response directly using Google Generative AI"""
+    """流式返回聊天补全响应（基于 OpenAI 兼容接口）。"""
     try:
         # Check if request contains very large input
         input_too_large = False
@@ -467,5 +467,5 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
 @app.get("/")
 async def root():
-    """Root endpoint to check if the API is running"""
+    """根路由，用于检查 API 是否正常运行。"""
     return {"status": "API is running", "message": "Navigate to /docs for API documentation"}

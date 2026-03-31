@@ -1,4 +1,4 @@
-"""AzureOpenAI ModelClient integration."""
+"""Azure OpenAI ModelClient 集成模块。"""
 
 import os
 from typing import (
@@ -65,16 +65,16 @@ from adalflow.components.model_client.utils import parse_embedding_response
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
-
+# 导出的公共类
 __all__ = ["AzureAIClient"]
 
-# TODO: this overlaps with openai client largely, might need to refactor to subclass openai client to simplify the code
+# TODO: 此客户端与 OpenAI 客户端高度重叠，后续可考虑重构为继承 OpenAI 客户端以简化代码
 
 
-# completion parsing functions and you can combine them into one singple chat completion parser
+# 补全解析函数，可根据需要组合成单一解析器
 def get_first_message_content(completion: ChatCompletion) -> str:
-    r"""When we only need the content of the first message.
-    It is the default parser for chat completion."""
+    r"""仅需要第一条消息内容时使用。
+    这是聊天补全的默认解析器。"""
     return completion.choices[0].message.content
 
 
@@ -83,25 +83,25 @@ def get_first_message_content(completion: ChatCompletion) -> str:
 
 
 def parse_stream_response(completion: ChatCompletionChunk) -> str:
-    r"""Parse the response of the stream API."""
+    r"""解析流式 API 的响应块，提取文本内容。"""
     return completion.choices[0].delta.content
 
 
 def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
-    r"""Handle the streaming response."""
+    r"""处理流式响应，逐块 yield 解析后的文本内容。"""
     for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
+        log.debug(f"原始响应块: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
 
 def get_all_messages_content(completion: ChatCompletion) -> List[str]:
-    r"""When the n > 1, get all the messages content."""
+    r"""当 n > 1 时，获取所有候选消息的文本内容。"""
     return [c.message.content for c in completion.choices]
 
 
 def get_probabilities(completion: ChatCompletion) -> List[List[TokenLogProb]]:
-    r"""Get the probabilities of each token in the completion."""
+    r"""获取补全中每个 token 的对数概率。"""
     log_probs = []
     for c in completion.choices:
         content = c.logprobs.content
@@ -201,51 +201,49 @@ class AzureAIClient(ModelClient):
         chat_completion_parser: Callable[[Completion], Any] = None,
         input_type: Literal["text", "messages"] = "text",
     ):
-        r"""It is recommended to set the API_KEY into the  environment variable instead of passing it as an argument.
-
-
-        Initializes the Azure OpenAI client with either API key or AAD token authentication.
+        r"""初始化 Azure OpenAI 客户端，支持 API Key 或 AAD Token 两种认证方式。
+        建议将 API_KEY 设置为环境变量而非直接传参。
 
         Args:
-            api_key: Azure OpenAI API key.
-            api_version: Azure OpenAI API version.
-            azure_endpoint: Azure OpenAI endpoint.
-            credential: Azure AD credential for token-based authentication.
-            chat_completion_parser: Function to parse chat completions.
-            input_type: Input format, either "text" or "messages".
-
+            api_key: Azure OpenAI API 密钥。
+            api_version: Azure OpenAI API 版本。
+            azure_endpoint: Azure OpenAI 服务端点 URL。
+            credential: Azure AD 凭证对象（用于基于令牌的认证）。
+            chat_completion_parser: 用于解析聊天补全响应的函数。
+            input_type: 输入格式，'text' 或 'messages'。
         """
         super().__init__()
 
-        # added api_type azure for azure Ai
+        # 标记 API 类型为 azure
         self.api_type = "azure"
         self._api_key = api_key
         self._apiversion = api_version
         self._azure_endpoint = azure_endpoint
         self._credential = credential
-        self.sync_client = self.init_sync_client()
-        self.async_client = None  # only initialize if the async call is called
+        self.sync_client = self.init_sync_client()   # 立即初始化同步客户端
+        self.async_client = None  # 异步客户端按需初始化
         self.chat_completion_parser = (
             chat_completion_parser or get_first_message_content
         )
         self._input_type = input_type
 
     def init_sync_client(self):
+        """初始化同步 Azure OpenAI 客户端，支持 API Key 和 AAD Token 两种认证方式。"""
         api_key = self._api_key or os.getenv("AZURE_OPENAI_API_KEY")
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        # credential = self._credential or DefaultAzureCredential
         if not azure_endpoint:
-            raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
+            raise ValueError("必须设置环境变量 AZURE_OPENAI_ENDPOINT")
         if not api_version:
-            raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
+            raise ValueError("必须设置环境变量 AZURE_OPENAI_VERSION")
 
         if api_key:
+            # 使用 API Key 认证
             return AzureOpenAI(
                 api_key=api_key, azure_endpoint=azure_endpoint, api_version=api_version
             )
         elif self._credential:
-            # credential = DefaultAzureCredential()
+            # 使用 Azure AD Token 认证
             token_provider = get_bearer_token_provider(
                 DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
             )
@@ -256,25 +254,26 @@ class AzureAIClient(ModelClient):
             )
         else:
             raise ValueError(
-                "Environment variable AZURE_OPENAI_API_KEY must be set or credential must be provided"
+                "必须设置环境变量 AZURE_OPENAI_API_KEY 或提供有效的 credential"
             )
 
     def init_async_client(self):
+        """初始化异步 Azure OpenAI 客户端，支持 API Key 和 AAD Token 两种认证方式。"""
         api_key = self._api_key or os.getenv("AZURE_OPENAI_API_KEY")
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        # credential = self._credential or DefaultAzureCredential()
         if not azure_endpoint:
-            raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
+            raise ValueError("必须设置环境变量 AZURE_OPENAI_ENDPOINT")
         if not api_version:
-            raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
+            raise ValueError("必须设置环境变量 AZURE_OPENAI_VERSION")
 
         if api_key:
+            # 使用 API Key 认证
             return AsyncAzureOpenAI(
                 api_key=api_key, azure_endpoint=azure_endpoint, api_version=api_version
             )
         elif self._credential:
-            # credential = DefaultAzureCredential()
+            # 使用 Azure AD Token 认证
             token_provider = get_bearer_token_provider(
                 DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
             )
@@ -285,7 +284,7 @@ class AzureAIClient(ModelClient):
             )
         else:
             raise ValueError(
-                "Environment variable AZURE_OPENAI_API_KEY must be set or credential must be provided"
+                "必须设置环境变量 AZURE_OPENAI_API_KEY 或提供有效的 credential"
             )
 
     # def _parse_chat_completion(self, completion: ChatCompletion) -> "GeneratorOutput":
@@ -304,7 +303,7 @@ class AzureAIClient(ModelClient):
         self,
         completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
     ) -> "GeneratorOutput":
-        """Parse the completion, and put it into the raw_response."""
+        """解析补全响应并将其存入 raw_response 字段。"""
         log.debug(f"completion: {completion}, parser: {self.chat_completion_parser}")
         try:
             data = self.chat_completion_parser(completion)
@@ -335,9 +334,8 @@ class AzureAIClient(ModelClient):
     def parse_embedding_response(
         self, response: CreateEmbeddingResponse
     ) -> EmbedderOutput:
-        r"""Parse the embedding response to a structure AdalFlow components can understand.
-
-        Should be called in ``Embedder``.
+        r"""将嵌入响应解析为 AdalFlow 组件可理解的格式。
+        应在 ``Embedder`` 中调用。
         """
         try:
             return parse_embedding_response(response)
@@ -351,9 +349,8 @@ class AzureAIClient(ModelClient):
         model_kwargs: Dict = {},
         model_type: ModelType = ModelType.UNDEFINED,
     ) -> Dict:
-        r"""
-        Specify the API input type and output api_kwargs that will be used in _call and _acall methods.
-        Convert the Component's standard input, and system_input(chat model) and model_kwargs into API-specific format
+        r"""将组件标准输入和 model_kwargs 转换为 API 特定格式，
+        供 _call 和 _acall 方法使用。
         """
 
         final_model_kwargs = model_kwargs.copy()
@@ -408,9 +405,7 @@ class AzureAIClient(ModelClient):
         max_time=5,
     )
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
-        """
-        kwargs is the combined input and model_kwargs.  Support streaming call.
-        """
+        """同步调用 Azure OpenAI API，支持流式和非流式两种模式。"""
         log.info(f"api_kwargs: {api_kwargs}")
         if model_type == ModelType.EMBEDDER:
             return self.sync_client.embeddings.create(**api_kwargs)
@@ -437,9 +432,7 @@ class AzureAIClient(ModelClient):
     async def acall(
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ):
-        """
-        kwargs is the combined input and model_kwargs
-        """
+        """异步调用 Azure OpenAI API。"""
         if self.async_client is None:
             self.async_client = self.init_async_client()
         if model_type == ModelType.EMBEDDER:
@@ -458,7 +451,7 @@ class AzureAIClient(ModelClient):
         return obj
 
     def to_dict(self) -> Dict[str, Any]:
-        r"""Convert the component to a dictionary."""
+        r"""将组件序列化为字典。"""
         # TODO: not exclude but save yes or no for recreating the clients
         exclude = [
             "sync_client",

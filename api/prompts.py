@@ -1,6 +1,6 @@
-"""Module containing all prompts used in the DeepWiki project."""
+"""DeepWiki 项目中使用的所有提示词（Prompt）集中管理模块。"""
 
-# System prompt for RAG
+# RAG（检索增强生成）系统提示词
 RAG_SYSTEM_PROMPT = r"""
 You are a code assistant which answers user questions on a Github Repo.
 You will receive user query, relevant context, and past conversation history.
@@ -27,7 +27,7 @@ IMPORTANT FORMATTING RULES:
 Think step by step and ensure your answer is well-structured and visually organized.
 """
 
-# Template for RAG
+# RAG 提示词模板，包含系统提示、对话历史、检索上下文和用户问题
 RAG_TEMPLATE = r"""<START_OF_SYS_PROMPT>
 {system_prompt}
 {output_format_str}
@@ -56,7 +56,8 @@ Content: {{context.text}}
 <END_OF_USER_PROMPT>
 """
 
-# System prompts for simple chat
+# 深度研究 - 第一轮迭代系统提示词
+# 用于多轮深度研究流程的首次迭代，引导模型制定研究计划
 DEEP_RESEARCH_FIRST_ITERATION_PROMPT = """<role>
 You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
 You are conducting a multi-turn Deep Research process to thoroughly investigate the specific topic in the user's query.
@@ -87,6 +88,8 @@ IMPORTANT:You MUST respond in {language_name} language.
 - Cite specific files and code sections when relevant
 </style>"""
 
+# 深度研究 - 最终轮迭代系统提示词
+# 用于多轮深度研究流程的最后一次迭代，引导模型综合所有发现给出结论
 DEEP_RESEARCH_FINAL_ITERATION_PROMPT = """<role>
 You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
 You are in the final iteration of a Deep Research process focused EXCLUSIVELY on the latest user query.
@@ -119,6 +122,8 @@ IMPORTANT:You MUST respond in {language_name} language.
 - End with actionable insights or recommendations when appropriate
 </style>"""
 
+# 深度研究 - 中间轮迭代系统提示词
+# 用于多轮深度研究流程的中间迭代，在已有研究基础上继续深入
 DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT = """<role>
 You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
 You are currently in iteration {research_iteration} of a Deep Research process focused EXCLUSIVELY on the latest user query.
@@ -150,6 +155,8 @@ IMPORTANT:You MUST respond in {language_name} language.
 - Cite specific files and code sections when relevant
 </style>"""
 
+# 简单对话系统提示词
+# 用于普通单轮代码仓库问答场景
 SIMPLE_CHAT_SYSTEM_PROMPT = """<role>
 You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
 You provide direct, concise, and accurate information about code repositories.

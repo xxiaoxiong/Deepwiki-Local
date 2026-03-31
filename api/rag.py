@@ -10,54 +10,57 @@ import adalflow as adal
 from api.tools.embedder import get_embedder
 from api.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
 
-# Create our own implementation of the conversation classes
+# 自定义对话类，替代 adalflow 原生实现，修复列表索引越界错误
 @dataclass
 class UserQuery:
+    """用户查询数据类。"""
     query_str: str
 
 @dataclass
 class AssistantResponse:
+    """助手回复数据类。"""
     response_str: str
 
 @dataclass
 class DialogTurn:
+    """单轮对话数据类，包含用户查询和助手回复。"""
     id: str
     user_query: UserQuery
     assistant_response: AssistantResponse
 
 class CustomConversation:
-    """Custom implementation of Conversation to fix the list assignment index out of range error"""
+    """自定义对话管理类，修复原始 Conversation 类的列表索引越界问题。"""
 
     def __init__(self):
         self.dialog_turns = []
 
     def append_dialog_turn(self, dialog_turn):
-        """Safely append a dialog turn to the conversation"""
+        """安全地向对话历史中追加一轮对话记录。"""
         if not hasattr(self, 'dialog_turns'):
             self.dialog_turns = []
         self.dialog_turns.append(dialog_turn)
 
-# Import other adalflow components
+# 导入其他 adalflow 组件
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 from api.config import configs
 from api.data_pipeline import DatabaseManager
 
-# Configure logging
+# 配置日志记录器
 logger = logging.getLogger(__name__)
 
-# Maximum token limit for embedding models
-MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
+# 嵌入模型的最大输入 token 数（8192 限制下的安全阈值）
+MAX_INPUT_TOKENS = 7500
 
 class Memory(adal.core.component.DataComponent):
-    """Simple conversation management with a list of dialog turns."""
+    """简单的对话历史管理组件，维护一个对话轮次列表。"""
 
     def __init__(self):
         super().__init__()
-        # Use our custom implementation instead of the original Conversation class
+        # 使用自定义实现替代原生 Conversation 类
         self.current_conversation = CustomConversation()
 
     def call(self) -> Dict:
-        """Return the conversation history as a dictionary."""
+        """以字典形式返回完整的对话历史记录。"""
         all_dialog_turns = {}
         try:
             # Check if dialog_turns exists and is a list
@@ -90,14 +93,14 @@ class Memory(adal.core.component.DataComponent):
 
     def add_dialog_turn(self, user_query: str, assistant_response: str) -> bool:
         """
-        Add a dialog turn to the conversation history.
+        向对话历史中添加一轮对话记录。
 
         Args:
-            user_query: The user's query
-            assistant_response: The assistant's response
+            user_query: 用户的查询内容。
+            assistant_response: 助手的回复内容。
 
         Returns:
-            bool: True if successful, False otherwise
+            bool: 成功返回 True，失败返回 False。
         """
         try:
             # Create a new dialog turn using our custom implementation
@@ -151,17 +154,17 @@ class RAGAnswer(adal.DataClass):
     __output_fields__ = ["rationale", "answer"]
 
 class RAG(adal.Component):
-    """RAG with one repo.
-    If you want to load a new repos, call prepare_retriever(repo_url_or_path) first."""
+    """基于单个代码仓库的 RAG（检索增强生成）组件。
+    若要切换仓库，请先调用 prepare_retriever(repo_url_or_path)。"""
 
-    def __init__(self, provider="deepseek", model=None, use_s3: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
+    def __init__(self, provider="deepseek", model=None, use_s3: bool = False):  # noqa: F841 - use_s3 保留以兼容旧接口
         """
-        Initialize the RAG component.
+        初始化 RAG 组件。
 
         Args:
-            provider: Model provider to use (deepseek, vllm, ollama)
-            model: Model name to use with the provider
-            use_s3: Whether to use S3 for database storage (default: False)
+            provider: 使用的模型提供商（deepseek、vllm、ollama）。
+            model: 对应提供商的模型名称。
+            use_s3: 是否使用 S3 存储数据库（默认 False）。
         """
         super().__init__()
 
@@ -244,19 +247,19 @@ IMPORTANT FORMATTING RULES:
 
 
     def initialize_db_manager(self):
-        """Initialize the database manager with local storage"""
+        """初始化数据库管理器（使用本地文件存储）。"""
         self.db_manager = DatabaseManager()
         self.transformed_docs = []
 
     def _validate_and_filter_embeddings(self, documents: List) -> List:
         """
-        Validate embeddings and filter out documents with invalid or mismatched embedding sizes.
+        校验嵌入向量并过滤掉无效或维度不一致的文档。
 
         Args:
-            documents: List of documents with embeddings
+            documents: 包含嵌入向量的文档列表。
 
         Returns:
-            List of documents with valid embeddings of consistent size
+            维度一致且有效的文档列表。
         """
         if not documents:
             logger.warning("No documents provided for embedding validation")
@@ -346,16 +349,15 @@ IMPORTANT FORMATTING RULES:
                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                       included_dirs: List[str] = None, included_files: List[str] = None):
         """
-        Prepare the retriever for a repository.
-        Will load database from local storage if available.
+        为指定仓库准备检索器，如本地已有缓存则直接加载。
 
         Args:
-            repo_url_or_path: URL or local path to the repository
-            access_token: Optional access token for private repositories
-            excluded_dirs: Optional list of directories to exclude from processing
-            excluded_files: Optional list of file patterns to exclude from processing
-            included_dirs: Optional list of directories to include exclusively
-            included_files: Optional list of file patterns to include exclusively
+            repo_url_or_path: 仓库 URL 或本地路径。
+            access_token: 私有仓库的访问令牌（可选）。
+            excluded_dirs: 排除的目录列表（可选）。
+            excluded_files: 排除的文件模式列表（可选）。
+            included_dirs: 仅包含的目录列表（可选）。
+            included_files: 仅包含的文件模式列表（可选）。
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
@@ -415,13 +417,14 @@ IMPORTANT FORMATTING RULES:
 
     def call(self, query: str, language: str = "en") -> Tuple[List]:
         """
-        Process a query using RAG.
+        使用 RAG 处理用户查询。
 
         Args:
-            query: The user's query
+            query: 用户的查询内容。
+            language: 响应语言代码（默认 'en'）。
 
         Returns:
-            Tuple of (RAGAnswer, retrieved_documents)
+            (检索到的文档列表,) 的元组。
         """
         try:
             retrieved_documents = self.retriever(query)

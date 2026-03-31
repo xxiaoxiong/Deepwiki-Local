@@ -1,4 +1,4 @@
-"""Dashscope (Alibaba Cloud) ModelClient integration."""
+"""Dashscope（阿里云）ModelClient 集成模块。"""
 
 import os
 import pickle
@@ -66,7 +66,7 @@ setup_logging()
 log = logging.getLogger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:
-    """When we only need the content of the first message."""
+    """仅需要第一条消息内容时使用。"""
     log.info(f"🔍 get_first_message_content called with: {type(completion)}")
     log.debug(f"raw completion: {completion}")
     
@@ -89,14 +89,14 @@ def get_first_message_content(completion: ChatCompletion) -> str:
 
 
 def parse_stream_response(completion: ChatCompletionChunk) -> str:
-    """Parse the response of the stream API."""
+    """解析流式 API 的响应块，提取文本内容。"""
     return completion.choices[0].delta.content
 
 
 def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
-    """Handle the streaming response."""
+    """处理流式响应，逐块 yield 解析后的文本内容。"""
     for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
+        log.debug(f"原始响应块: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
@@ -145,24 +145,24 @@ class DashscopeClient(ModelClient):
 
     def _prepare_client_config(self):
         """
-        Private helper method to prepare client configuration.
-        
+        准备客户端配置的私有辅助方法。
+
         Returns:
-            tuple: (api_key, workspace_id, base_url) for client initialization
-        
+            tuple: (api_key, workspace_id, base_url) 用于初始化客户端
+
         Raises:
-            ValueError: If API key is not provided
+            ValueError: 未提供 API Key 时抛出
         """
         api_key = self._api_key or os.getenv(self._env_api_key_name)
         workspace_id = self._workspace_id or os.getenv(self._env_workspace_id_name)
-        
+
         if not api_key:
             raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+                f"必须设置环境变量 {self._env_api_key_name}"
             )
-        
+
         if not workspace_id:
-            log.warning(f"Environment variable {self._env_workspace_id_name} not set. Some features may not work properly.")
+            log.warning(f"环境变量 {self._env_workspace_id_name} 未设置，部分功能可能无法正常使用。")
         
         # For Dashscope, we need to include the workspace ID in the base URL if provided
         base_url = self.base_url
@@ -173,25 +173,20 @@ class DashscopeClient(ModelClient):
         return api_key, workspace_id, base_url
 
     def init_sync_client(self):
+        """初始化同步 Dashscope 客户端。"""
         api_key, workspace_id, base_url = self._prepare_client_config()
-        
         client = OpenAI(api_key=api_key, base_url=base_url)
-        
-        # Store workspace_id for later use in requests
+        # 将 workspace_id 存储在客户端对象上，供后续请求使用
         if workspace_id:
             client._workspace_id = workspace_id
-        
         return client
 
     def init_async_client(self):
+        """初始化异步 Dashscope 客户端。"""
         api_key, workspace_id, base_url = self._prepare_client_config()
-        
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        
-        # Store workspace_id for later use in requests
         if workspace_id:
             client._workspace_id = workspace_id
-        
         return client
 
     def parse_chat_completion(
@@ -389,7 +384,7 @@ class DashscopeClient(ModelClient):
         max_time=5,
     )
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
-        """Call the Dashscope API."""
+        """同步调用 Dashscope API。"""
         if model_type == ModelType.LLM:
             if not api_kwargs.get("stream", False):
                 # For non-streaming, enable_thinking must be false.
@@ -498,7 +493,7 @@ class DashscopeClient(ModelClient):
     async def acall(
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ):
-        """Async call to the Dashscope API."""
+        """异步调用 Dashscope API。"""
         if not self.async_client:
             self.async_client = self.init_async_client()
 
@@ -625,12 +620,11 @@ class DashscopeClient(ModelClient):
         }
 
     def __getstate__(self):
-        """
-        Customize serialization to exclude non-picklable client objects.
-        This method is called by pickle when saving the object's state.
+        """自定义序列化逻辑，排除不可 pickle 的客户端对象。
+        由 pickle 保存对象状态时调用。
         """
         state = self.__dict__.copy()
-        # Remove the unpicklable client instances
+        # 移除不可序列化的客户端实例
         if 'sync_client' in state:
             del state['sync_client']
         if 'async_client' in state:
@@ -638,14 +632,13 @@ class DashscopeClient(ModelClient):
         return state
 
     def __setstate__(self, state):
-        """
-        Customize deserialization to re-create the client objects.
-        This method is called by pickle when loading the object's state.
+        """自定义反序列化逻辑，重新创建客户端对象。
+        由 pickle 恢复对象状态时调用。
         """
         self.__dict__.update(state)
-        # Re-initialize the clients after unpickling
+        # 反序列化后重新初始化客户端
         self.sync_client = self.init_sync_client()
-        self.async_client = None  # It will be lazily initialized when acall is used
+        self.async_client = None  # 异步客户端按需懒加载
 
 
 class DashScopeEmbedder(DataComponent):
