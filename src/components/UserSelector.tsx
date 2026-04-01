@@ -433,6 +433,7 @@ next.config.js
                       setIsCustomModel(true);
                       if (preset.base_url) {
                         setProviderUrls(prev => ({ ...prev, [preset.provider]: preset.base_url! }));
+                        handleSaveProviderUrl(preset.provider, preset.base_url);
                       }
                       if (preset.api_key && setApiKey) {
                         setApiKey(preset.api_key);

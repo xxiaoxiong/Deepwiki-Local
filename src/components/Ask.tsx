@@ -75,6 +75,7 @@ const Ask: React.FC<AskProps> = ({
   const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
   const [researchIteration, setResearchIteration] = useState(0);
   const [researchComplete, setResearchComplete] = useState(false);
+  const [repoPrepared, setRepoPrepared] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const responseRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef(provider);
@@ -531,6 +532,50 @@ const Ask: React.FC<AskProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [response, isLoading, deepResearch, researchIteration]);
 
+  // Pre-download a GitLab repo archive from the browser and upload it to the backend.
+  // This is needed when the backend (Docker) cannot reach intranet GitLab servers,
+  // but the browser (on the LAN) can. The backend will reuse the extracted files
+  // instead of attempting a git clone that would fail due to network isolation.
+  const prepareGitLabRepo = async (): Promise<boolean> => {
+    if (!repoInfo.repoUrl || !repoInfo.token) return false;
+    try {
+      const url = new URL(repoInfo.repoUrl);
+      const domain = `${url.protocol}//${url.hostname}${url.port ? ':' + url.port : ''}`;
+      const projectPath = url.pathname.replace(/^\/|\/$/g, '').replace(/\.git$/, '');
+      const encodedPath = encodeURIComponent(projectPath);
+      const archiveUrl = `${domain}/api/v4/projects/${encodedPath}/repository/archive.zip`;
+
+      const archiveResp = await fetch(archiveUrl, {
+        headers: { 'PRIVATE-TOKEN': repoInfo.token }
+      });
+      if (!archiveResp.ok) {
+        console.warn(`GitLab archive download failed: ${archiveResp.status}`);
+        return false;
+      }
+
+      const archiveBlob = await archiveResp.blob();
+      const fileName = `${projectPath.replace(/\//g, '-')}.zip`;
+
+      const formData = new FormData();
+      formData.append('file', archiveBlob, fileName);
+      formData.append('repo_url', repoInfo.repoUrl);
+      formData.append('repo_type', repoInfo.type);
+
+      const uploadResp = await fetch('/api/repo/prepare', {
+        method: 'POST',
+        body: formData,
+      });
+      if (!uploadResp.ok) {
+        console.warn(`Backend repo prepare failed: ${uploadResp.status}`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('Error preparing GitLab repo:', err);
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -547,6 +592,22 @@ const Ask: React.FC<AskProps> = ({
     setResearchComplete(false);
 
     try {
+      // For intranet GitLab repos the backend container often cannot reach the
+      // host via git-clone. The browser can, so download the archive here and
+      // upload it to the backend so prepare_retriever can use the local copy.
+      const isIntranetGitLab =
+        repoInfo.type === 'gitlab' &&
+        !!repoInfo.token &&
+        !!repoInfo.repoUrl &&
+        !repoInfo.repoUrl.toLowerCase().includes('gitlab.com');
+
+      if (isIntranetGitLab && !repoPrepared) {
+        setResponse('Preparing repository for AI Q\u0026A\u2026');
+        const ok = await prepareGitLabRepo();
+        if (ok) setRepoPrepared(true);
+        setResponse('');
+      }
+
       // Create initial message
       const initialMessage: Message = {
         role: 'user',

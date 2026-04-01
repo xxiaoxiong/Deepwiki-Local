@@ -111,6 +111,10 @@ const nextConfig: NextConfig = {
         source: '/api/schedules',
         destination: `${TARGET_SERVER_BASE_URL}/api/schedules`,
       },
+      {
+        source: '/api/repo/prepare',
+        destination: `${TARGET_SERVER_BASE_URL}/api/repo/prepare`,
+      },
     ];
   },
 };

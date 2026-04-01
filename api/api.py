@@ -1,7 +1,7 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from typing import List, Optional, Dict, Any, Literal
@@ -1194,6 +1194,77 @@ async def root():
         "version": "1.0.0",
         "endpoints": endpoints
     }
+
+# --- Repo Prepare Endpoint ---
+# Allows the frontend (browser) to upload a repo archive so the backend
+# does not need to git-clone from a potentially unreachable intranet host.
+
+@app.post("/api/repo/prepare")
+async def prepare_repo_from_archive(
+    file: UploadFile = File(...),
+    repo_url: str = Form(...),
+    repo_type: str = Form("gitlab"),
+):
+    """
+    Accept a ZIP archive of a repository uploaded by the browser and extract it
+    to ~/.adalflow/repos/{repo_name}/ so that AI Q&A (prepare_retriever) can
+    use it without requiring the backend to git-clone from an intranet GitLab.
+    """
+    import zipfile
+    import shutil
+
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        return JSONResponse(status_code=400, content={"error": "Please upload a .zip file"})
+
+    try:
+        from adalflow.utils import get_adalflow_default_root_path
+        from api.data_pipeline import DatabaseManager
+        root_path = get_adalflow_default_root_path()
+
+        # Derive the same repo_name that _create_repo would use
+        db_manager = DatabaseManager()
+        repo_name = db_manager._extract_repo_name_from_url(repo_url, repo_type)
+
+        save_repo_dir = os.path.join(root_path, "repos", repo_name)
+
+        # Remove any stale partial clone before extracting the archive
+        if os.path.exists(save_repo_dir):
+            shutil.rmtree(save_repo_dir, ignore_errors=True)
+        os.makedirs(save_repo_dir, exist_ok=True)
+
+        # Write the uploaded ZIP to a temp file then extract
+        zip_bytes = await file.read()
+        import io
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            names = zf.namelist()
+            # GitLab archives wrap content in a top-level directory; strip it
+            prefix = ""
+            if names:
+                top = names[0].split('/')[0] + '/'
+                if all(n.startswith(top) for n in names):
+                    prefix = top
+
+            for item in zf.infolist():
+                rel = item.filename[len(prefix):]
+                if not rel:
+                    continue
+                target = os.path.join(save_repo_dir, rel)
+                if item.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with zf.open(item) as src, open(target, 'wb') as dst:
+                        dst.write(src.read())
+
+        logger.info(f"Repo archive extracted to {save_repo_dir} (repo_name={repo_name})")
+        return {"success": True, "repo_name": repo_name, "path": save_repo_dir}
+
+    except zipfile.BadZipFile:
+        return JSONResponse(status_code=400, content={"error": "Invalid ZIP file"})
+    except Exception as e:
+        logger.error(f"Error preparing repo from archive: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 # --- Processed Projects Endpoint --- (New Endpoint)
 @app.get("/api/processed_projects", response_model=List[ProcessedProjectEntry])

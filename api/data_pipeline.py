@@ -879,12 +879,13 @@ class DatabaseManager:
 
                 save_repo_dir = os.path.join(root_path, "repos", repo_name)
 
-                # Always re-clone to get the latest code (skip cache)
-                if os.path.exists(save_repo_dir):
-                    import shutil
-                    logger.info(f"Removing existing repository at {save_repo_dir} for fresh clone.")
-                    shutil.rmtree(save_repo_dir, ignore_errors=True)
-                download_repo(repo_url_or_path, save_repo_dir, repo_type, access_token)
+                # Only clone if the repository is not already present locally.
+                # This allows pre-populated repos (e.g. from the /api/repo/prepare endpoint)
+                # to be reused without requiring network access from the backend container.
+                if os.path.exists(save_repo_dir) and os.listdir(save_repo_dir):
+                    logger.info(f"Repository already exists at {save_repo_dir}, skipping clone.")
+                else:
+                    download_repo(repo_url_or_path, save_repo_dir, repo_type, access_token)
             else:  # local path
                 repo_name = os.path.basename(repo_url_or_path)
                 save_repo_dir = repo_url_or_path
