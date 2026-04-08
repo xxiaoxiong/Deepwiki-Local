@@ -259,6 +259,9 @@ export default function RepoWikiPage() {
   const [modelIncludedDirs, setModelIncludedDirs] = useState(includedDirs);
   const [modelIncludedFiles, setModelIncludedFiles] = useState(includedFiles);
 
+  // Max token limit from configuration
+  const maxTokenLimitParam = parseInt(searchParams.get('max_token_limit') || '60000', 10);
+  const maxTokenLimit = isNaN(maxTokenLimitParam) || maxTokenLimitParam < 1000 ? 60000 : maxTokenLimitParam;
 
   // Wiki type state - default to comprehensive view
   const isComprehensiveParam = searchParams.get('comprehensive') !== 'false';
@@ -542,23 +545,42 @@ Remember:
                 type: effectiveRepoInfo.type,
                 file_paths: filePaths,
                 token: currentToken || undefined,
+                max_file_tokens: maxTokenLimit,
               })
             });
             if (filesResponse.ok) {
               const filesData = await filesResponse.json();
               const fileEntries = Object.entries(filesData.files || {});
-              // Limit total file context to avoid exceeding model token limits (e.g. 80k tokens for local models).
-              // Mixed code+CJK content averages ~1.5-2 chars/token, so 100k chars ≈ 50k-66k tokens,
-              // leaving sufficient headroom for the prompt template and model output.
-              const MAX_TOTAL_FILE_CONTEXT_CHARS = 100000;
+              // Dynamically calculate file context character budget based on the user-configured
+              // token limit. Reserve ~10000 tokens for prompt template overhead and model output.
+              // Approximate 3 characters per token for mixed code/text content.
+              const PROMPT_OVERHEAD_TOKENS = 10000;
+              const availableTokens = Math.max(maxTokenLimit - PROMPT_OVERHEAD_TOKENS, 5000);
+              const MAX_TOTAL_FILE_CONTEXT_CHARS = availableTokens * 3;
               const perFileBudget = fileEntries.length > 0
                 ? Math.min(50000, Math.floor(MAX_TOTAL_FILE_CONTEXT_CHARS / fileEntries.length))
                 : 50000;
+              let truncatedFiles = 0;
               for (const [path, content] of fileEntries) {
                 if (content && typeof content === 'string' && !content.startsWith('[')) {
+                  // Stop adding more files once total budget is exhausted
                   if (fileContextText.length >= MAX_TOTAL_FILE_CONTEXT_CHARS) break;
-                  fileContextText += `\n\n## File: ${path}\n\`\`\`\n${(content as string).substring(0, perFileBudget)}\n\`\`\``;
+                  const remaining = MAX_TOTAL_FILE_CONTEXT_CHARS - fileContextText.length;
+                  const charLimit = Math.min(perFileBudget, remaining);
+                  const fileContent = content as string;
+                  const wasTruncated = fileContent.length > charLimit;
+                  const truncatedContent = wasTruncated
+                    ? fileContent.substring(0, charLimit) + `\n... (truncated: ${fileContent.length} chars -> ${charLimit} chars to fit model context limit)`
+                    : fileContent;
+                  if (wasTruncated) {
+                    truncatedFiles++;
+                    console.warn(`Truncated file ${path}: ${fileContent.length} -> ${charLimit} chars`);
+                  }
+                  fileContextText += `\n\n## File: ${path}\n\`\`\`\n${truncatedContent}\n\`\`\``;
                 }
+              }
+              if (truncatedFiles > 0) {
+                console.warn(`Truncated ${truncatedFiles} file(s) to fit token limit (${maxTokenLimit})`);
               }
             }
           } catch (fileErr) {
@@ -658,7 +680,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl, maxTokenLimit]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
@@ -682,6 +704,34 @@ Remember:
       // Get repository URL
       const repoUrl = getRepoUrl(effectiveRepoInfo);
 
+      // Truncate file tree and readme to fit within the model's context window.
+      // Reserve ~5000 tokens for the prompt template and ~5000 for model output.
+      // Allocate 80% of the remaining budget to file tree and 20% to readme.
+      const STRUCTURE_PROMPT_OVERHEAD_TOKENS = 10000;
+      const availableContentTokens = Math.max(maxTokenLimit - STRUCTURE_PROMPT_OVERHEAD_TOKENS, 5000);
+      const fileTreeCharBudget = Math.floor(availableContentTokens * 0.8) * 3; // ~3 chars per token
+      const readmeCharBudget = Math.floor(availableContentTokens * 0.2) * 3;
+
+      let truncatedFileTree = fileTree;
+      let fileTreeTruncated = false;
+      if (fileTree.length > fileTreeCharBudget) {
+        truncatedFileTree = fileTree.substring(0, fileTreeCharBudget);
+        // Cut at the last complete line to avoid broken paths
+        const lastNewline = truncatedFileTree.lastIndexOf('\n');
+        if (lastNewline > 0) truncatedFileTree = truncatedFileTree.substring(0, lastNewline);
+        const totalLines = fileTree.split('\n').length;
+        const keptLines = truncatedFileTree.split('\n').length;
+        truncatedFileTree += `\n... (truncated: showing ${keptLines} of ${totalLines} files due to model context limit)`;
+        fileTreeTruncated = true;
+        console.warn(`File tree truncated from ${fileTree.length} to ${truncatedFileTree.length} chars (${totalLines} -> ${keptLines} lines) to fit token limit ${maxTokenLimit}`);
+      }
+
+      let truncatedReadme = readme;
+      if (readme.length > readmeCharBudget) {
+        truncatedReadme = readme.substring(0, readmeCharBudget) + '\n\n... (truncated due to model context limit)';
+        console.warn(`README truncated from ${readme.length} to ${truncatedReadme.length} chars to fit token limit ${maxTokenLimit}`);
+      }
+
       // Prepare request body
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestBody: Record<string, any> = {
@@ -691,14 +741,14 @@ Remember:
           role: 'user',
 content: `Analyze this GitHub repository ${owner}/${repo} and create a wiki structure for it.
 
-1. The complete file tree of the project:
+1. The ${fileTreeTruncated ? 'partial ' : 'complete '}file tree of the project:
 <file_tree>
-${fileTree}
+${truncatedFileTree}
 </file_tree>
 
 2. The README file of the project:
 <readme>
-${readme}
+${truncatedReadme}
 </readme>
 
 I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
@@ -1104,7 +1154,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
+  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, apiKeyState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView, maxTokenLimit]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async () => {

@@ -41,6 +41,8 @@
     "concise": "Краткая",
     "comprehensiveDescription": "Детализированная Wiki со структурированными разделами и большим числом страниц",
     "conciseDescription": "Упрощённая Wiki с меньшим числом страниц и основной информацией",
+    "maxTokenLimit": "Лимит токенов контекста модели",
+    "maxTokenLimitHint": "Файлы, превышающие этот лимит токенов, будут автоматически пропущены при генерации вики. По умолчанию: 60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",

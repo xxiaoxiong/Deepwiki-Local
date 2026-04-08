@@ -41,6 +41,8 @@
     "concise": "簡潔型",
     "comprehensiveDescription": "包含結構化章節和更多頁面的詳細 Wiki",
     "conciseDescription": "頁面更少，僅包含核心資訊的簡化 Wiki",
+    "maxTokenLimit": "模型上下文 Token 上限",
+    "maxTokenLimitHint": "超過此 Token 上限的檔案將在生成 Wiki 時自動跳過。預設值：60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",

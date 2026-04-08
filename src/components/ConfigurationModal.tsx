@@ -53,6 +53,10 @@ interface ConfigurationModalProps {
   includedFiles: string;
   setIncludedFiles: (value: string) => void;
 
+  // Token limit
+  maxTokenLimit: number;
+  setMaxTokenLimit: (value: number) => void;
+
   // Form submission
   onSubmit: () => void;
   isSubmitting: boolean;
@@ -95,6 +99,8 @@ export default function ConfigurationModal({
   setIncludedDirs,
   includedFiles,
   setIncludedFiles,
+  maxTokenLimit,
+  setMaxTokenLimit,
   onSubmit,
   isSubmitting,
   authRequired,
@@ -237,6 +243,31 @@ export default function ConfigurationModal({
                 includedFiles={includedFiles}
                 setIncludedFiles={setIncludedFiles}
               />
+            </div>
+
+            {/* Max Token Limit */}
+            <div className="mb-4">
+              <label htmlFor="max-token-limit" className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                {t.form?.maxTokenLimit || 'Model Context Token Limit'}
+              </label>
+              <input
+                id="max-token-limit"
+                type="number"
+                min={1000}
+                step={1000}
+                value={maxTokenLimit}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val) && val >= 1000) {
+                    setMaxTokenLimit(val);
+                  }
+                }}
+                className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                placeholder="60000"
+              />
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                {t.form?.maxTokenLimitHint || 'Files exceeding this token limit will be automatically skipped during wiki generation. Default: 60000'}
+              </p>
             </div>
 
             {/* Access token section using TokenInput component */}

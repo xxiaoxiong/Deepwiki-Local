@@ -133,6 +133,7 @@ export default function Home() {
           setExcludedFiles(config.excludedFiles || '');
           setIncludedDirs(config.includedDirs || '');
           setIncludedFiles(config.includedFiles || '');
+          setMaxTokenLimit(config.maxTokenLimit || 60000);
         }
       }
     } catch (error) {
@@ -169,6 +170,7 @@ export default function Home() {
   const [excludedFiles, setExcludedFiles] = useState('');
   const [includedDirs, setIncludedDirs] = useState('');
   const [includedFiles, setIncludedFiles] = useState('');
+  const [maxTokenLimit, setMaxTokenLimit] = useState<number>(60000);
   const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'gitee' | 'local' | 'svn'>('github');
   const [accessToken, setAccessToken] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -364,6 +366,7 @@ export default function Home() {
           excludedFiles,
           includedDirs,
           includedFiles,
+          maxTokenLimit,
         };
         existingConfigs[currentRepoUrl] = configToSave;
         localStorage.setItem(REPO_CONFIG_CACHE_KEY, JSON.stringify(existingConfigs));
@@ -430,6 +433,9 @@ export default function Home() {
 
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
+
+    // Add max token limit
+    params.append('max_token_limit', maxTokenLimit.toString());
 
     // Signal to wiki page to skip cache and force fresh generation
     params.append('force', 'true');
@@ -568,6 +574,8 @@ export default function Home() {
             setIncludedDirs={setIncludedDirs}
             includedFiles={includedFiles}
             setIncludedFiles={setIncludedFiles}
+            maxTokenLimit={maxTokenLimit}
+            setMaxTokenLimit={setMaxTokenLimit}
             onSubmit={handleGenerateWiki}
             isSubmitting={isSubmitting}
             authRequired={authRequired}

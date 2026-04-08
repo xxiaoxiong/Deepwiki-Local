@@ -41,6 +41,8 @@
     "concise": "Súc tích",
     "comprehensiveDescription": "Wiki chi tiết với các phần có cấu trúc và nhiều trang hơn",
     "conciseDescription": "Wiki đơn giản hóa với ít trang hơn và thông tin thiết yếu",
+    "maxTokenLimit": "Giới hạn token ngữ cảnh mô hình",
+    "maxTokenLimitHint": "Các tệp vượt quá giới hạn token này sẽ tự động bị bỏ qua khi tạo wiki. Mặc định: 60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",

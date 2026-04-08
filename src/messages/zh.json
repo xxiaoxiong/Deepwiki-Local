@@ -41,6 +41,8 @@
     "concise": "简洁型",
     "comprehensiveDescription": "包含结构化章节和更多页面的详细Wiki",
     "conciseDescription": "页面更少，仅包含核心信息的简化Wiki",
+    "maxTokenLimit": "模型上下文Token上限",
+    "maxTokenLimitHint": "超过此Token上限的文件将在生成Wiki时自动跳过。默认值：60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",

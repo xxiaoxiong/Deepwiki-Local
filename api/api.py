@@ -734,6 +734,7 @@ class RepoFilesRequest(BaseModel):
     type: str = Field("local", description="Repository type")
     file_paths: List[str] = Field(..., description="List of file paths to read")
     token: Optional[str] = Field(None, description="Access token for private repos")
+    max_file_tokens: Optional[int] = Field(None, description="Max token limit for the model context; files exceeding this will be skipped")
 
 @app.post("/repo/files")
 async def get_repo_files(request: RepoFilesRequest):
@@ -775,9 +776,24 @@ async def get_repo_files(request: RepoFilesRequest):
             repo_path = tmp_dir
 
         # 读取请求的文件内容
-        MAX_FILE_SIZE = 100_000  # 单文件上限 100KB
+        MAX_FILE_SIZE = 500_000  # 单文件读取上限 500KB（读取后再截断）
         MAX_TOTAL_SIZE = 500_000  # 总大小上限 500KB
         total_size = 0
+
+        # Calculate per-file character budget from the user-configured model context limit.
+        # Reserve ~10000 tokens for prompt overhead; approximate 3 chars per token.
+        max_file_token_limit = request.max_file_tokens
+        per_file_char_budget = MAX_FILE_SIZE  # default per-file budget
+        if max_file_token_limit and max_file_token_limit > 0:
+            available_tokens = max(max_file_token_limit - 10000, 5000)
+            MAX_TOTAL_SIZE = available_tokens * 3  # dynamic total size based on token limit
+            # Distribute budget evenly across files
+            num_files = len(request.file_paths) if request.file_paths else 1
+            per_file_char_budget = min(MAX_FILE_SIZE, max(5000, MAX_TOTAL_SIZE // num_files))
+            logger.info(f"Token limit set to {max_file_token_limit}, available tokens: {available_tokens}, "
+                        f"max total chars: {MAX_TOTAL_SIZE}, per-file char budget: {per_file_char_budget}")
+
+        truncated_files = []
 
         for file_path in request.file_paths:
             if total_size >= MAX_TOTAL_SIZE:
@@ -790,18 +806,27 @@ async def get_repo_files(request: RepoFilesRequest):
                 results[file_path] = None
                 continue
 
-            file_size = os.path.getsize(full_path)
-            if file_size > MAX_FILE_SIZE:
-                results[file_path] = f"[文件过大: {file_size} 字节，已跳过]"
-                continue
-
             try:
+                # Read file content, respecting the remaining budget
+                remaining_budget = MAX_TOTAL_SIZE - total_size
+                char_limit = min(per_file_char_budget, remaining_budget)
                 with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
+                    content = f.read(char_limit + 1)  # read one extra char to detect truncation
+
+                if len(content) > char_limit:
+                    # File exceeds budget — truncate to limit
+                    content = content[:char_limit]
+                    truncated_files.append(file_path)
+                    logger.info(f"Truncated file {file_path} to {char_limit} chars (per-file budget)")
+
                 results[file_path] = content
                 total_size += len(content)
             except Exception as e:
                 results[file_path] = f"[读取文件时出错: {str(e)}]"
+
+        if truncated_files:
+            logger.info(f"Truncated {len(truncated_files)} file(s) to fit token limit: "
+                        f"{truncated_files[:5]}{'...' if len(truncated_files) > 5 else ''}")
 
         return {"files": results}
 

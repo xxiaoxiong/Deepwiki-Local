@@ -30,7 +30,10 @@ RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
     poetry config virtualenvs.options.always-copy --local true && \
     poetry lock --no-interaction --no-ansi && \
     POETRY_MAX_WORKERS=10 poetry install --no-interaction --no-ansi --only main && \
-    poetry cache clear --all .
+    poetry cache clear --all . && \
+    # Replace CUDA PyTorch (pulled in by sentence-transformers) with CPU-only build.
+    # Saves ~2-2.5 GB: inference uses Ollama, embeddings use a small CPU model — no GPU needed.
+    .venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu --no-cache-dir --force-reinstall
 
 # Use Python 3.11 as final image
 FROM python:3.11-slim

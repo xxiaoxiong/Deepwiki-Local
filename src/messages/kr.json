@@ -41,6 +41,8 @@
       "concise": "간결함",
       "comprehensiveDescription": "구조화된 섹션과 더 많은 페이지가 있는 상세한 위키",
       "conciseDescription": "페이지 수가 적고 필수 정보만 포함된 간소화된 위키",
+      "maxTokenLimit": "모델 컨텍스트 토큰 제한",
+      "maxTokenLimitHint": "이 토큰 제한을 초과하는 파일은 위키 생성 시 자동으로 건너뜁니다. 기본값: 60000",
       "providerGoogle": "구글",
       "providerOpenAI": "OpenAI",
       "providerOpenRouter": "OpenRouter",

@@ -41,6 +41,8 @@
     "concise": "簡潔",
     "comprehensiveDescription": "構造化されたセクションとより多くのページを持つ詳細なWiki",
     "conciseDescription": "ページ数が少なく、必要な情報のみを含む簡素化されたWiki",
+    "maxTokenLimit": "モデルコンテキストトークン上限",
+    "maxTokenLimitHint": "このトークン上限を超えるファイルはWiki生成時に自動的にスキップされます。デフォルト：60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",

@@ -41,6 +41,8 @@
     "concise": "Concisa",
     "comprehensiveDescription": "Wiki detalhada com seções estruturadas e mais páginas",
     "conciseDescription": "Wiki simplificada com menos páginas e informações essenciais",
+    "maxTokenLimit": "Limite de tokens do contexto do modelo",
+    "maxTokenLimitHint": "Arquivos que excederem este limite de tokens serão automaticamente ignorados durante a geração do wiki. Padrão: 60000",
     "providerGoogle": "Google",
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",
