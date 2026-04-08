@@ -92,6 +92,63 @@ const getCacheKey = (owner: string, repo: string, repoType: string, language: st
   return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}`;
 };
 
+// File priority scoring for smart truncation ordering.
+// Lower score = higher priority = processed first and given more budget.
+const getFilePriority = (filePath: string): number => {
+  const lowerPath = filePath.toLowerCase();
+  const name = lowerPath.split('/').pop() || '';
+  const parts = lowerPath.split('/');
+
+  // Tier 4 (lowest): generated/minified/lock/vendor files
+  if (name.endsWith('.min.js') || name.endsWith('.min.css') || name.endsWith('.bundle.js') ||
+      name.endsWith('.map') || name.endsWith('.d.ts') || name.endsWith('.d.mts') ||
+      name === 'package-lock.json' || name === 'yarn.lock' || name === 'pnpm-lock.yaml' ||
+      name === 'composer.lock' || name === 'gemfile.lock' || name === 'poetry.lock' ||
+      name === 'cargo.lock' || name === 'go.sum') return 4;
+  if (parts.some(p => ['node_modules', 'vendor', 'dist', 'build', '.git', '__pycache__',
+    'target', '.next', '.nuxt', 'coverage', '.cache'].includes(p))) return 4;
+
+  // Tier 3: test / docs / examples
+  if (parts.some(p => ['test', 'tests', '__tests__', 'spec', 'specs', 'e2e',
+    'fixtures', 'mocks', 'testdata', 'test_data'].includes(p))) return 3;
+  if (name.startsWith('test_') || name.endsWith('_test.py') || name.endsWith('_test.go') ||
+      name.endsWith('.test.js') || name.endsWith('.test.ts') || name.endsWith('.test.tsx') ||
+      name.endsWith('.spec.js') || name.endsWith('.spec.ts') || name.endsWith('.spec.tsx')) return 3;
+  if (parts.some(p => ['docs', 'doc', 'documentation', 'examples', 'example', 'samples'].includes(p))) return 3;
+
+  // Tier 0 (highest): entry points + project config
+  const coreStems = ['main', 'app', 'index', 'server', 'mod', 'lib', 'program', 'startup', 'application'];
+  const nameStem = name.replace(/\.[^.]+$/, '');
+  if (coreStems.includes(nameStem)) return 0;
+  if (name === '__init__.py') return 0;
+  if (name.startsWith('readme')) return 0;
+  if (['package.json', 'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle', 'build.gradle.kts',
+       'settings.gradle', 'settings.gradle.kts', 'build.xml', 'ivy.xml',
+       'makefile', 'cmakelists.txt', 'dockerfile', 'setup.py', 'setup.cfg', 'pyproject.toml',
+       'tsconfig.json', 'next.config.js', 'next.config.mjs', 'vite.config.ts', 'vite.config.js',
+       'webpack.config.js', 'angular.json', '.env.example', 'requirements.txt', 'gemfile',
+       'docker-compose.yml', 'docker-compose.yaml',
+       'web.config', 'app.config', 'appsettings.json', 'appsettings.development.json',
+       'global.asax', 'applicationcontext.xml', 'struts.xml', 'hibernate.cfg.xml',
+       'persistence.xml', 'log4j.properties', 'log4j2.xml', 'logback.xml',
+       'assembly.info', 'nuget.config', 'packages.config'].includes(name)) return 0;
+  // Extension-based config detection for C#/VB/.NET/Java project files
+  if (name.endsWith('.csproj') || name.endsWith('.sln') || name.endsWith('.fsproj') ||
+      name.endsWith('.vbproj') || name.endsWith('.vcxproj') || name.endsWith('.props') ||
+      name.endsWith('.targets')) return 0;
+
+  // Tier 1: source in key directories
+  if (parts.some(p => ['src', 'lib', 'core', 'api', 'app', 'pkg', 'cmd',
+    'internal', 'services', 'controllers', 'models', 'routes', 'handlers',
+    'domain', 'entities', 'repository', 'repositories', 'viewmodels', 'views',
+    'middleware', 'filters', 'interceptors', 'config', 'configuration',
+    'migrations', 'interfaces', 'abstractions', 'common', 'utils', 'helpers',
+    'extensions', 'dtos', 'mappers', 'providers', 'managers', 'factories'].includes(p))) return 1;
+
+  // Tier 2: everything else
+  return 2;
+};
+
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -550,34 +607,42 @@ Remember:
             });
             if (filesResponse.ok) {
               const filesData = await filesResponse.json();
-              const fileEntries = Object.entries(filesData.files || {});
+              const fileEntries = Object.entries(filesData.files || {})
+                .filter(([, c]) => c && typeof c === 'string' && !(c as string).startsWith('['));
+
               // Dynamically calculate file context character budget based on the user-configured
               // token limit. Reserve ~10000 tokens for prompt template overhead and model output.
               // Approximate 3 characters per token for mixed code/text content.
               const PROMPT_OVERHEAD_TOKENS = 10000;
               const availableTokens = Math.max(maxTokenLimit - PROMPT_OVERHEAD_TOKENS, 5000);
               const MAX_TOTAL_FILE_CONTEXT_CHARS = availableTokens * 3;
-              const perFileBudget = fileEntries.length > 0
-                ? Math.min(50000, Math.floor(MAX_TOTAL_FILE_CONTEXT_CHARS / fileEntries.length))
-                : 50000;
+
+              // Sort files by priority: core files first, generated/test files last
+              const sortedEntries = [...fileEntries].sort(
+                (a, b) => getFilePriority(a[0]) - getFilePriority(b[0])
+              );
+
+              // Tiered budget multipliers: core=3x, key_src=2x, regular=1x, test=0.5x, generated=0.25x
+              const tierMultipliers: Record<number, number> = { 0: 3, 1: 2, 2: 1, 3: 0.5, 4: 0.25 };
+              const totalWeight = sortedEntries.reduce((sum, [p]) => sum + (tierMultipliers[getFilePriority(p)] ?? 1), 0);
+              const baseUnit = totalWeight > 0 ? MAX_TOTAL_FILE_CONTEXT_CHARS / totalWeight : MAX_TOTAL_FILE_CONTEXT_CHARS;
+
               let truncatedFiles = 0;
-              for (const [path, content] of fileEntries) {
-                if (content && typeof content === 'string' && !content.startsWith('[')) {
-                  // Stop adding more files once total budget is exhausted
-                  if (fileContextText.length >= MAX_TOTAL_FILE_CONTEXT_CHARS) break;
-                  const remaining = MAX_TOTAL_FILE_CONTEXT_CHARS - fileContextText.length;
-                  const charLimit = Math.min(perFileBudget, remaining);
-                  const fileContent = content as string;
-                  const wasTruncated = fileContent.length > charLimit;
-                  const truncatedContent = wasTruncated
-                    ? fileContent.substring(0, charLimit) + `\n... (truncated: ${fileContent.length} chars -> ${charLimit} chars to fit model context limit)`
-                    : fileContent;
-                  if (wasTruncated) {
-                    truncatedFiles++;
-                    console.warn(`Truncated file ${path}: ${fileContent.length} -> ${charLimit} chars`);
-                  }
-                  fileContextText += `\n\n## File: ${path}\n\`\`\`\n${truncatedContent}\n\`\`\``;
+              for (const [path, content] of sortedEntries) {
+                if (fileContextText.length >= MAX_TOTAL_FILE_CONTEXT_CHARS) break;
+                const priority = getFilePriority(path);
+                const remaining = MAX_TOTAL_FILE_CONTEXT_CHARS - fileContextText.length;
+                const tierBudget = Math.floor(baseUnit * (tierMultipliers[priority] ?? 1));
+                const charLimit = Math.max(1000, Math.min(tierBudget, remaining));
+                const fileContent = content as string;
+                const wasTruncated = fileContent.length > charLimit;
+                const truncatedContent = wasTruncated
+                  ? fileContent.substring(0, charLimit) + `\n... (truncated: ${fileContent.length} -> ${charLimit} chars, priority ${priority})`
+                  : fileContent;
+                if (wasTruncated) {
+                  truncatedFiles++;
                 }
+                fileContextText += `\n\n## File: ${path}\n\`\`\`\n${truncatedContent}\n\`\`\``;
               }
               if (truncatedFiles > 0) {
                 console.warn(`Truncated ${truncatedFiles} file(s) to fit token limit (${maxTokenLimit})`);
@@ -588,10 +653,18 @@ Remember:
           }
         }
 
-        // Build the full prompt with file context included
-        const fullPromptContent = fileContextText
+        // Build the full prompt with file context included.
+        // Final safety guard: hard-cap the total prompt to the model's context budget (~2 chars/token
+        // for CJK-heavy content, most conservative estimate) to guarantee no token overflow.
+        const hardCharLimit = maxTokenLimit * 2;
+        let assembledPrompt = fileContextText
           ? `${promptContent}\n\n[RELEVANT_SOURCE_FILES]\n${fileContextText}`
           : promptContent;
+        if (assembledPrompt.length > hardCharLimit) {
+          console.warn(`Final prompt ${assembledPrompt.length} chars exceeds hard limit ${hardCharLimit}, truncating`);
+          assembledPrompt = assembledPrompt.substring(0, hardCharLimit);
+        }
+        const fullPromptContent = assembledPrompt;
 
         // Use direct LLM endpoint (no RAG/embeddings needed)
         const directRequestBody = {
@@ -712,18 +785,33 @@ Remember:
       const fileTreeCharBudget = Math.floor(availableContentTokens * 0.8) * 3; // ~3 chars per token
       const readmeCharBudget = Math.floor(availableContentTokens * 0.2) * 3;
 
-      let truncatedFileTree = fileTree;
+      // Sort file tree lines by priority so core files survive truncation.
+      const allFileLines = fileTree.split('\n').filter(l => l.trim());
+      const totalFileCount = allFileLines.length;
+
+      // Extract unique top-level directories for a summary header
+      const topLevelDirs = new Set<string>();
+      for (const line of allFileLines) {
+        const firstSlash = line.indexOf('/');
+        if (firstSlash > 0) topLevelDirs.add(line.substring(0, firstSlash + 1));
+        else topLevelDirs.add(line);
+      }
+      const dirSummary = `Project overview: ${totalFileCount} files across directories: ${[...topLevelDirs].sort().join(', ')}`;
+
+      // Sort by priority (0=core → 4=generated), stable within same tier
+      const sortedLines = [...allFileLines].sort((a, b) => getFilePriority(a) - getFilePriority(b));
+      const sortedTree = dirSummary + '\n\n' + sortedLines.join('\n');
+
+      let truncatedFileTree = sortedTree;
       let fileTreeTruncated = false;
-      if (fileTree.length > fileTreeCharBudget) {
-        truncatedFileTree = fileTree.substring(0, fileTreeCharBudget);
-        // Cut at the last complete line to avoid broken paths
+      if (sortedTree.length > fileTreeCharBudget) {
+        truncatedFileTree = sortedTree.substring(0, fileTreeCharBudget);
         const lastNewline = truncatedFileTree.lastIndexOf('\n');
         if (lastNewline > 0) truncatedFileTree = truncatedFileTree.substring(0, lastNewline);
-        const totalLines = fileTree.split('\n').length;
         const keptLines = truncatedFileTree.split('\n').length;
-        truncatedFileTree += `\n... (truncated: showing ${keptLines} of ${totalLines} files due to model context limit)`;
+        truncatedFileTree += `\n... (truncated: showing ${keptLines} of ${totalFileCount} files, sorted by importance — core files shown first)`;
         fileTreeTruncated = true;
-        console.warn(`File tree truncated from ${fileTree.length} to ${truncatedFileTree.length} chars (${totalLines} -> ${keptLines} lines) to fit token limit ${maxTokenLimit}`);
+        console.warn(`File tree sorted & truncated: ${totalFileCount} -> ${keptLines} lines to fit token limit ${maxTokenLimit}`);
       }
 
       let truncatedReadme = readme;
@@ -862,6 +950,14 @@ IMPORTANT:
 4. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters`
         }]
       };
+
+      // Final safety guard: hard-cap the message content using conservative 2 chars/token for CJK
+      const structureHardLimit = maxTokenLimit * 2;
+      const msgContent = requestBody.messages[0].content;
+      if (msgContent.length > structureHardLimit) {
+        console.warn(`Structure prompt ${msgContent.length} chars exceeds hard limit ${structureHardLimit}, truncating`);
+        requestBody.messages[0].content = msgContent.substring(0, structureHardLimit);
+      }
 
       // Add tokens if available
       addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);

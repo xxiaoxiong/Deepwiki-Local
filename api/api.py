@@ -729,12 +729,74 @@ async def get_repo_structure(
                 pass
 
 
+def get_file_priority(file_path: str) -> int:
+    """Return priority score for a file path (0=highest, 4=lowest).
+    Used to sort files so core files get read first and given more budget."""
+    lower = file_path.lower().replace('\\', '/')
+    name = lower.rsplit('/', 1)[-1] if '/' in lower else lower
+    parts = lower.split('/')
+
+    # Tier 4: generated / minified / lock / vendor
+    if any(name.endswith(ext) for ext in ('.min.js', '.min.css', '.bundle.js', '.map', '.d.ts', '.d.mts')):
+        return 4
+    if name in ('package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'composer.lock',
+                'gemfile.lock', 'poetry.lock', 'cargo.lock', 'go.sum'):
+        return 4
+    if any(p in parts for p in ('node_modules', 'vendor', 'dist', 'build', '.git',
+                                '__pycache__', 'target', '.next', '.nuxt', 'coverage', '.cache')):
+        return 4
+
+    # Tier 3: tests / docs / examples
+    if any(p in parts for p in ('test', 'tests', '__tests__', 'spec', 'specs', 'e2e',
+                                'fixtures', 'mocks', 'testdata', 'test_data')):
+        return 3
+    if (name.startswith('test_') or any(name.endswith(s) for s in
+            ('_test.py', '_test.go', '.test.js', '.test.ts', '.test.tsx',
+             '.spec.js', '.spec.ts', '.spec.tsx'))):
+        return 3
+    if any(p in parts for p in ('docs', 'doc', 'documentation', 'examples', 'example', 'samples')):
+        return 3
+
+    # Tier 0: entry points + project config
+    stem = name.rsplit('.', 1)[0] if '.' in name else name
+    if stem in ('main', 'app', 'index', 'server', 'mod', 'lib', 'program', 'startup', 'application'):
+        return 0
+    if name == '__init__.py' or name.startswith('readme'):
+        return 0
+    if name in ('package.json', 'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle',
+                'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'build.xml', 'ivy.xml',
+                'makefile', 'cmakelists.txt', 'dockerfile', 'setup.py', 'setup.cfg', 'pyproject.toml',
+                'tsconfig.json', 'next.config.js', 'next.config.mjs', 'vite.config.ts', 'vite.config.js',
+                'webpack.config.js', 'angular.json', '.env.example', 'requirements.txt',
+                'gemfile', 'docker-compose.yml', 'docker-compose.yaml',
+                'web.config', 'app.config', 'appsettings.json', 'appsettings.development.json',
+                'global.asax', 'applicationcontext.xml', 'struts.xml', 'hibernate.cfg.xml',
+                'persistence.xml', 'log4j.properties', 'log4j2.xml', 'logback.xml',
+                'assembly.info', 'nuget.config', 'packages.config'):
+        return 0
+    # Extension-based config detection for C#/VB/.NET/Java project files
+    if any(name.endswith(ext) for ext in ('.csproj', '.sln', '.fsproj', '.vbproj', '.vcxproj', '.props', '.targets')):
+        return 0
+
+    # Tier 1: source in key directories
+    if any(p in parts for p in ('src', 'lib', 'core', 'api', 'app', 'pkg', 'cmd',
+                                'internal', 'services', 'controllers', 'models', 'routes', 'handlers',
+                                'domain', 'entities', 'repository', 'repositories', 'viewmodels', 'views',
+                                'middleware', 'filters', 'interceptors', 'config', 'configuration',
+                                'migrations', 'interfaces', 'abstractions', 'common', 'utils', 'helpers',
+                                'extensions', 'dtos', 'mappers', 'providers', 'managers', 'factories')):
+        return 1
+
+    # Tier 2: everything else
+    return 2
+
+
 class RepoFilesRequest(BaseModel):
     repo_url: str = Field(..., description="Repository URL or local path")
     type: str = Field("local", description="Repository type")
     file_paths: List[str] = Field(..., description="List of file paths to read")
     token: Optional[str] = Field(None, description="Access token for private repos")
-    max_file_tokens: Optional[int] = Field(None, description="Max token limit for the model context; files exceeding this will be skipped")
+    max_file_tokens: Optional[int] = Field(None, description="Max token limit for the model context; oversized files will be truncated")
 
 @app.post("/repo/files")
 async def get_repo_files(request: RepoFilesRequest):
@@ -776,26 +838,31 @@ async def get_repo_files(request: RepoFilesRequest):
             repo_path = tmp_dir
 
         # 读取请求的文件内容
-        MAX_FILE_SIZE = 500_000  # 单文件读取上限 500KB（读取后再截断）
+        MAX_FILE_SIZE = 500_000  # 单文件读取上限 500KB
         MAX_TOTAL_SIZE = 500_000  # 总大小上限 500KB
         total_size = 0
 
-        # Calculate per-file character budget from the user-configured model context limit.
+        # Calculate dynamic budgets from the user-configured model context limit.
         # Reserve ~10000 tokens for prompt overhead; approximate 3 chars per token.
         max_file_token_limit = request.max_file_tokens
-        per_file_char_budget = MAX_FILE_SIZE  # default per-file budget
         if max_file_token_limit and max_file_token_limit > 0:
             available_tokens = max(max_file_token_limit - 10000, 5000)
-            MAX_TOTAL_SIZE = available_tokens * 3  # dynamic total size based on token limit
-            # Distribute budget evenly across files
-            num_files = len(request.file_paths) if request.file_paths else 1
-            per_file_char_budget = min(MAX_FILE_SIZE, max(5000, MAX_TOTAL_SIZE // num_files))
-            logger.info(f"Token limit set to {max_file_token_limit}, available tokens: {available_tokens}, "
-                        f"max total chars: {MAX_TOTAL_SIZE}, per-file char budget: {per_file_char_budget}")
+            MAX_TOTAL_SIZE = available_tokens * 3
+
+        # Sort files by priority: core files first, generated/test files last
+        sorted_paths = sorted(request.file_paths, key=get_file_priority)
+
+        # Tiered budget multipliers matching frontend: core=3x, key_src=2x, regular=1x, test=0.5x, generated=0.25x
+        tier_multipliers = {0: 3.0, 1: 2.0, 2: 1.0, 3: 0.5, 4: 0.25}
+        total_weight = sum(tier_multipliers.get(get_file_priority(p), 1.0) for p in sorted_paths)
+        base_unit = MAX_TOTAL_SIZE / total_weight if total_weight > 0 else MAX_TOTAL_SIZE
+
+        logger.info(f"Processing {len(sorted_paths)} files, max_total={MAX_TOTAL_SIZE}, "
+                    f"token_limit={max_file_token_limit}, base_unit={int(base_unit)}")
 
         truncated_files = []
 
-        for file_path in request.file_paths:
+        for file_path in sorted_paths:
             if total_size >= MAX_TOTAL_SIZE:
                 break
             # 规范化路径，防止目录遍历攻击
@@ -807,17 +874,18 @@ async def get_repo_files(request: RepoFilesRequest):
                 continue
 
             try:
-                # Read file content, respecting the remaining budget
+                priority = get_file_priority(file_path)
                 remaining_budget = MAX_TOTAL_SIZE - total_size
-                char_limit = min(per_file_char_budget, remaining_budget)
+                tier_budget = int(base_unit * tier_multipliers.get(priority, 1.0))
+                char_limit = max(1000, min(tier_budget, remaining_budget, MAX_FILE_SIZE))
+
                 with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read(char_limit + 1)  # read one extra char to detect truncation
+                    content = f.read(char_limit + 1)
 
                 if len(content) > char_limit:
-                    # File exceeds budget — truncate to limit
                     content = content[:char_limit]
                     truncated_files.append(file_path)
-                    logger.info(f"Truncated file {file_path} to {char_limit} chars (per-file budget)")
+                    logger.info(f"Truncated file {file_path} to {char_limit} chars (priority {priority})")
 
                 results[file_path] = content
                 total_size += len(content)
