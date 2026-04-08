@@ -547,9 +547,17 @@ Remember:
             if (filesResponse.ok) {
               const filesData = await filesResponse.json();
               const fileEntries = Object.entries(filesData.files || {});
+              // Limit total file context to avoid exceeding model token limits (e.g. 80k tokens for local models).
+              // Mixed code+CJK content averages ~1.5-2 chars/token, so 100k chars ≈ 50k-66k tokens,
+              // leaving sufficient headroom for the prompt template and model output.
+              const MAX_TOTAL_FILE_CONTEXT_CHARS = 100000;
+              const perFileBudget = fileEntries.length > 0
+                ? Math.min(50000, Math.floor(MAX_TOTAL_FILE_CONTEXT_CHARS / fileEntries.length))
+                : 50000;
               for (const [path, content] of fileEntries) {
                 if (content && typeof content === 'string' && !content.startsWith('[')) {
-                  fileContextText += `\n\n## File: ${path}\n\`\`\`\n${(content as string).substring(0, 50000)}\n\`\`\``;
+                  if (fileContextText.length >= MAX_TOTAL_FILE_CONTEXT_CHARS) break;
+                  fileContextText += `\n\n## File: ${path}\n\`\`\`\n${(content as string).substring(0, perFileBudget)}\n\`\`\``;
                 }
               }
             }

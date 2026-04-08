@@ -1,7 +1,7 @@
 # Build argument for custom certificates directory
 ARG CUSTOM_CERT_DIR="certs"
 
-FROM node:20-alpine AS node_base
+FROM node:20-slim AS node_base
 
 FROM node_base AS node_deps
 WORKDIR /app
@@ -38,19 +38,19 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install Node.js and npm
-RUN apt-get update && apt-get install -y \
-    curl \
-    gnupg \
+# Install system dependencies (git needed for repo cloning; ca-certificates for HTTPS)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy Node.js binary directly from node_base stage (both node:20-slim and python:3.11-slim
+# are Debian/glibc-based, so the binary is fully compatible). This avoids the unreliable
+# deb.nodesource.com apt repository which frequently fails in restricted network environments.
+COPY --from=node_base /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_base /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm 2>/dev/null || true
 
 # Update certificates if custom ones were provided and copied successfully
 RUN if [ -n "${CUSTOM_CERT_DIR}" ]; then \
