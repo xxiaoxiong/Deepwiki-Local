@@ -959,6 +959,11 @@ IMPORTANT:
         requestBody.messages[0].content = msgContent.substring(0, structureHardLimit);
       }
 
+      // Append a hard format reminder as the final instruction so it is always
+      // the last text the LLM sees, even after truncation of the file tree.
+      requestBody.messages[0].content +=
+        '\n\nCRITICAL: Your entire response must be ONLY the XML block. Start with <wiki_structure> and end with </wiki_structure>. Do NOT include any prose, explanation, or markdown outside the XML tags.';
+
       // Add tokens if available
       addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
@@ -1029,6 +1034,36 @@ IMPORTANT:
         // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
 
+      // Fallback: if the LLM returned markdown instead of XML (common for large repos),
+      // extract ##/### headings and synthesize a valid <wiki_structure> block so the
+      // existing XML parsing pipeline can continue without changes.
+      if (!responseText.includes('<wiki_structure>')) {
+        console.warn('No <wiki_structure> tag in LLM response — attempting markdown-to-XML fallback');
+        const h1Match = responseText.match(/^#\s+(.+)$/m);
+        const wikiTitle = h1Match ? h1Match[1].trim() : `${owner}/${repo} Wiki`;
+        let pidx = 0;
+        let pagesXml = '';
+        const headingRe = /^#{2,3}\s+(.+)$/gm;
+        let hm;
+        while ((hm = headingRe.exec(responseText)) !== null) {
+          pidx++;
+          const imp: string = pidx <= 2 ? 'high' : pidx <= 5 ? 'medium' : 'low';
+          const safeTitle = hm[1].trim()
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          pagesXml += `    <page id="page-${pidx}">\n      <title>${safeTitle}</title>\n      <importance>${imp}</importance>\n      <relevant_files/>\n      <related_pages/>\n    </page>\n`;
+        }
+        if (pidx > 0) {
+          const safeWikiTitle = wikiTitle
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          responseText = `<wiki_structure>\n  <title>${safeWikiTitle}</title>\n  <description></description>\n  <pages>\n${pagesXml}  </pages>\n</wiki_structure>`;
+          console.log(`Markdown fallback: synthesised ${pidx} pages from headings`);
+        }
+      }
+
       // Extract wiki structure from response
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
@@ -1066,8 +1101,8 @@ IMPORTANT:
       const descriptionEl = xmlDoc.querySelector('description');
       const pagesEls = xmlDoc.querySelectorAll('page');
 
-      title = titleEl ? titleEl.textContent || '' : '';
-      description = descriptionEl ? descriptionEl.textContent || '' : '';
+      title = titleEl ? (titleEl.textContent || '').trim() : '';
+      description = descriptionEl ? (descriptionEl.textContent || '').trim() : '';
 
       // Parse pages using DOM
       pages = [];
@@ -1083,19 +1118,21 @@ IMPORTANT:
         const filePathEls = pageEl.querySelectorAll('file_path');
         const relatedEls = pageEl.querySelectorAll('related');
 
-        const title = titleEl ? titleEl.textContent || '' : '';
-        const importance = importanceEl ?
-          (importanceEl.textContent === 'high' ? 'high' :
-            importanceEl.textContent === 'medium' ? 'medium' : 'low') : 'medium';
+        const title = titleEl ? (titleEl.textContent || '').trim() : '';
+        const importanceText = importanceEl ? (importanceEl.textContent || '').trim() : '';
+        const importance = importanceText === 'high' ? 'high' :
+            importanceText === 'medium' ? 'medium' : 'low';
 
         const filePaths: string[] = [];
         filePathEls.forEach(el => {
-          if (el.textContent) filePaths.push(el.textContent);
+          const text = (el.textContent || '').trim();
+          if (text) filePaths.push(text);
         });
 
         const relatedPages: string[] = [];
         relatedEls.forEach(el => {
-          if (el.textContent) relatedPages.push(el.textContent);
+          const text = (el.textContent || '').trim();
+          if (text) relatedPages.push(text);
         });
 
         pages.push({
@@ -1124,16 +1161,18 @@ IMPORTANT:
             const pageRefEls = sectionEl.querySelectorAll('page_ref');
             const sectionRefEls = sectionEl.querySelectorAll('section_ref');
 
-            const title = titleEl ? titleEl.textContent || '' : '';
+            const title = titleEl ? (titleEl.textContent || '').trim() : '';
             const pages: string[] = [];
             const subsections: string[] = [];
 
             pageRefEls.forEach(el => {
-              if (el.textContent) pages.push(el.textContent);
+              const text = (el.textContent || '').trim();
+              if (text) pages.push(text);
             });
 
             sectionRefEls.forEach(el => {
-              if (el.textContent) subsections.push(el.textContent);
+              const text = (el.textContent || '').trim();
+              if (text) subsections.push(text);
             });
 
             sections.push({
@@ -1148,7 +1187,7 @@ IMPORTANT:
             sectionsEls.forEach(otherSection => {
               const otherSectionRefs = otherSection.querySelectorAll('section_ref');
               otherSectionRefs.forEach(ref => {
-                if (ref.textContent === id) {
+                if ((ref.textContent || '').trim() === id) {
                   isReferenced = true;
                 }
               });
@@ -1846,12 +1885,22 @@ IMPORTANT:
               // Ensure the cached structure has sections and rootSections
               const cachedStructure = {
                 ...cachedData.wiki_structure,
-                sections: cachedData.wiki_structure.sections || [],
-                rootSections: cachedData.wiki_structure.rootSections || []
+                sections: (cachedData.wiki_structure.sections || []).map((s: WikiSection) => ({
+                  ...s,
+                  title: (s.title || '').trim(),
+                  pages: s.pages.map((p: string) => p.trim()),
+                  subsections: s.subsections?.map((sub: string) => sub.trim())
+                })),
+                rootSections: (cachedData.wiki_structure.rootSections || []).map((r: string) => r.trim())
               };
 
-              // If sections or rootSections are missing, create intelligent ones based on page titles
-              if (!cachedStructure.sections.length || !cachedStructure.rootSections.length) {
+              // Validate that sections have page IDs that actually match existing pages
+              const pageIds = new Set(cachedStructure.pages.map((p: WikiPage) => p.id));
+              const sectionsHaveValidPages = cachedStructure.sections.length > 0 &&
+                cachedStructure.sections.some((s: WikiSection) => s.pages.some((pid: string) => pageIds.has(pid)));
+
+              // If sections or rootSections are missing or have no valid page refs, create intelligent ones based on page titles
+              if (!cachedStructure.sections.length || !cachedStructure.rootSections.length || !sectionsHaveValidPages) {
                 const pages = cachedStructure.pages;
                 const sections: WikiSection[] = [];
                 const rootSections: string[] = [];
